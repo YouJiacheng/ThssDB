@@ -16,7 +16,7 @@ public class ThssDB {
   private static final Logger logger = LoggerFactory.getLogger(ThssDB.class);
 
   private static IServiceHandler handler;
-  private static IService.Processor processor;
+  private static IService.Processor<IServiceHandler> processor;
   private static TServerSocket transport;
   private static TServer server;
 
@@ -33,12 +33,12 @@ public class ThssDB {
 
   private void start() {
     handler = new IServiceHandler();
-    processor = new IService.Processor(handler);
+    processor = new IService.Processor<>(handler);
     Runnable setup = () -> setUp(processor);
     new Thread(setup).start();
   }
 
-  private static void setUp(IService.Processor processor) {
+  private static void setUp(IService.Processor<IServiceHandler> processor) {
     try {
       transport = new TServerSocket(Global.DEFAULT_SERVER_PORT);
       server = new TSimpleServer(new TServer.Args(transport).processor(processor));
