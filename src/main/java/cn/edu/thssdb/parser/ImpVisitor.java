@@ -162,15 +162,19 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
     public String visitCreate_table_stmt(SQLParser.Create_table_stmtContext ctx) {
         try {
             var primaryKeys = getPrimaryKeys(ctx);
-            var columns = ctx.column_def().stream().map(it -> {
-                var name = it.column_name().getText();
-                var type = getColumnType(it.type_name());
-                var maxLen = getMaxLength(it.type_name());
+            var columns = new ArrayList<Column>();
+            for (var col : ctx.column_def()) {
+                var name = col.column_name().getText();
+                var type = getColumnType(col.type_name());
+                var maxLen = getMaxLength(col.type_name());
+                if (type == ColumnType.STRING && maxLen <= 0) {
+                    throw new Exception("String column must have positive max length");
+                }
                 var primary = primaryKeys.contains(name);
-                var notNull = getNotNull(it) || primary; // primary key is not null!
-                return new Column(name, type, primary, notNull, maxLen);
-            }).toArray(Column[]::new);
-            GetCurrentDB().create(ctx.table_name().getText(), columns);
+                var notNull = getNotNull(col) || primary; // primary key is not null!
+                columns.add(new Column(name, type, primary, notNull, maxLen));
+            }
+            GetCurrentDB().create(ctx.table_name().getText(), columns.toArray(new Column[0]));
             return "Create table " + ctx.table_name().getText() + ".";
         } catch (Exception e) {
             return e.getMessage();
