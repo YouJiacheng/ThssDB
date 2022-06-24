@@ -168,11 +168,9 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
                         var name = it.column_name().getText();
                         var type = getColumnType(it.type_name());
                         var maxLen = getMaxLength(it.type_name());
-                        var notNull = getNotNull(it);
-                        if (primaryKeys.contains(name)) {
-                            return new Column(name, type, 1, notNull, maxLen);
-                        }
-                        return new Column(name, type, 0, notNull, maxLen);
+                        var primary = primaryKeys.contains(name);
+                        var notNull = getNotNull(it) || primary; // primary key is not null!
+                        return new Column(name, type, primary, notNull, maxLen);
                     }
             ).toArray(Column[]::new);
             GetCurrentDB().create(ctx.table_name().getText(), columns);
