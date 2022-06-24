@@ -136,7 +136,7 @@ result_column
 
 table_query :
     table_name
-    | table_name ( K_JOIN table_name )+ K_ON multiple_condition ;
+    | table_name ( K_JOIN table_name )+ (K_ON multiple_condition)? ;
 
 auth_level :
     K_SELECT | K_INSERT | K_UPDATE | K_DELETE | K_DROP ;

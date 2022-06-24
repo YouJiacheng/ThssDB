@@ -10,9 +10,11 @@ import cn.edu.thssdb.schema.*;
 import cn.edu.thssdb.type.ColumnType;
 import org.antlr.v4.runtime.RuleContext;
 
-import java.lang.reflect.Array;
 import java.util.*;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import java.util.stream.StreamSupport;
 
 /**
  * When use SQL sentence, e.g., "SELECT avg(A) FROM TableX;"
@@ -300,6 +302,7 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
         var columnFullName = ctx.column_full_name();
         if (columnFullName != null) {
             if (columnFullName.table_name() != null) tableName = columnFullName.table_name().getText();
+            if (tableName == null) throw new Exception("Ambitious attribute, need table name");
             var columns = tableToColumns.get(tableName);
             var columnName = columnFullName.column_name().getText();
             var idx = columns.stream().map(Column::getColumnName).toList().indexOf(columnName);
@@ -319,15 +322,14 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
         return new Cell(null);
     }
 
-    private List<Row> filterTable(SQLParser.Multiple_conditionContext ctx, Table table) throws Exception {
+    private List<Row> filterSingleTable(SQLParser.Multiple_conditionContext ctx, Table table) throws Exception {
         var index = table.index;
         var name = table.tableName;
         var data = new ArrayList<Row>();
         for (var pair : index) {
             var row = pair.right;
-            if (ctx == null || evaluateMultipleCondition(ctx, Map.of(name, row), Map.of(name, table.columns), name)) {
+            if (ctx == null || evaluateMultipleCondition(ctx, Map.of(name, row), Map.of(name, table.columns), name))
                 data.add(row);
-            }
         }
         return data;
     }
@@ -339,7 +341,7 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
     public String visitDelete_stmt(SQLParser.Delete_stmtContext ctx) {
         try {
             var table = GetCurrentDB().get(ctx.table_name().getText());
-            var filteredTable = filterTable(ctx.multiple_condition(), table);
+            var filteredTable = filterSingleTable(ctx.multiple_condition(), table);
             for (var row : filteredTable)
                 table.delete(row);
             return "DELETE " + filteredTable.size() + " row(s)";
@@ -361,7 +363,7 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
             var setIdx = columns.stream().map(Column::getColumnName).toList().indexOf(setColumnName);
             if (setIdx < 0) throw new Exception("column " + setColumnName + " doesn't exist in table definition");
             var primaryIdx = table.primaryIndex;
-            var filteredTable = filterTable(ctx.multiple_condition(), table);
+            var filteredTable = filterSingleTable(ctx.multiple_condition(), table);
             for (var row : filteredTable) {
                 var entries = new ArrayList<>(row.getEntries());
                 var primaryKey = entries.get(primaryIdx);
@@ -375,6 +377,162 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
         }
     }
 
+    private QueryResult joinFilterProjectTables(SQLParser.Table_queryContext ctx, SQLParser.Multiple_conditionContext whereCtx) throws Exception {
+        var tables = new ArrayList<Table>();
+        for (var name : ctx.table_name())
+            tables.add(GetCurrentDB().get(name.getText()));
+        var tableToColumns = new HashMap<String, List<Column>>();
+        var tablesColumnsName = new ArrayList<List<String>>();
+        var tablesData = new ArrayList<List<Row>>();
+        for (var t : tables) {
+            tableToColumns.put(t.tableName, t.columns);
+            tablesColumnsName.add(t.columns.stream().map(Column::getColumnName).toList());
+            tablesData.add(StreamSupport.stream(t.index.spliterator(), false).map(p -> p.right).toList());
+        }
+        var num_tables = tablesData.size();
+        Function<List<Row>, Boolean> naturalJoinPredicate = null;
+        Function<List<Row>, Row> naturalJoinProjector = null;
+        List<String> naturalJoinColumnsName = null;
+        var onConditions = ctx.multiple_condition();
+        if (onConditions == null) { // natural join
+            Set<String> sharedColumnNameSet = new HashSet<>(tablesColumnsName.get(0));
+            for (var ns : tablesColumnsName)
+                sharedColumnNameSet.retainAll(ns);
+            var columnIdx = new ArrayList<List<Integer>>(); // [sharedColumns, tables]
+            for (var columnName : sharedColumnNameSet)
+                columnIdx.add(tables.stream().map(t -> t.columns.stream().map(Column::getColumnName).toList().indexOf(columnName)).toList());
+            naturalJoinPredicate = rows -> {
+                for (var idx : columnIdx) {
+                    var cell = rows.get(0).getEntries().get(idx.get(0));
+                    for (int i = 1; i < num_tables; ++i) {
+                        var other = rows.get(i).getEntries().get(idx.get(i));
+                        if (cell.value == null || other.value == null) return false;
+                        if (cell.value.getClass() != other.value.getClass()) return false;
+                        if (!cell.value.equals(other.value)) return false;
+                    }
+                }
+                return true;
+            };
+            naturalJoinProjector = rows -> {
+                var entries = new ArrayList<Cell>();
+                for (var idx : columnIdx)
+                    entries.add(rows.get(0).getEntries().get(idx.get(0)));
+                for (int i = 0; i < num_tables; ++i) {
+                    var tableColumnsName = tablesColumnsName.get(i);
+                    var tableEntries = rows.get(i).getEntries();
+                    for (int j = 0; j < tableColumnsName.size(); ++j)
+                        if (!sharedColumnNameSet.contains(tableColumnsName.get(j))) entries.add(tableEntries.get(j));
+                }
+                return new Row(entries);
+            };
+            naturalJoinColumnsName = new ArrayList<>();
+            for (var idx : columnIdx)
+                naturalJoinColumnsName.add(tablesColumnsName.get(0).get(idx.get(0)));
+            for (var ns : tablesColumnsName)
+                for (var n : ns)
+                    if (!sharedColumnNameSet.contains(n)) naturalJoinColumnsName.add(n);
+        }
+
+
+        Function<List<Row>, Boolean> finalNaturalJoinPredicate = naturalJoinPredicate;
+        var joinedTableIterator = new Object() {
+            private final List<Iterator<Row>> tableIterators = tablesData.stream().map(List::iterator).collect(Collectors.toList());
+            private List<Row> current = null;
+
+            private boolean currentUsed = true;
+
+            public boolean hasNext() throws Exception {
+                fetchNext();
+                return !currentUsed;
+            }
+
+            public List<Row> next() throws Exception {
+                fetchNext();
+                if (currentUsed) throw new NoSuchElementException();
+                currentUsed = true;
+                return current;
+            }
+
+            private boolean canInit() {
+                for (var iter : tableIterators) // need all has next
+                    if (!iter.hasNext()) return false;
+                return true;
+            }
+
+            private void init() {
+                if (!canInit()) throw new NoSuchElementException();
+                current = new ArrayList<>();
+                for (var iter : tableIterators)
+                    current.add(iter.next());
+            }
+
+
+            private boolean unfilteredHasNext() {
+                if (current == null) // need all has next
+                    return canInit();
+                for (var iter : tableIterators) // only need one has next
+                    if (iter.hasNext()) return true;
+                return false;
+            }
+
+            private List<Row> unfilteredNext() {
+                if (current == null) {
+                    init(); // may throw NoSuchElementException
+                    return current;
+                }
+                var innermost = tableIterators.get(0);
+                if (innermost.hasNext()) {
+                    current.set(0, innermost.next());
+                    return current;
+                }
+                // exhausted
+                for (int i = 1; i < num_tables; ++i) { // 尝试进位
+                    var iter = tableIterators.get(i);
+                    if (iter.hasNext()) { // 可以进位
+                        for (int j = 0; j < i; ++j) { // 清零
+                            tableIterators.set(j, tablesData.get(j).iterator());
+                            current.set(j, tableIterators.get(j).next());
+                        }
+                        current.set(i, iter.next());
+                        return current;
+                    }
+                }
+                // 溢出
+                throw new NoSuchElementException();
+            }
+
+            private void fetchNext() throws Exception {
+                if (!currentUsed) return;
+                while (unfilteredHasNext()) {
+                    var rows = unfilteredNext();
+                    var tableToRow = new HashMap<String, Row>();
+                    for (int i = 0; i < num_tables; ++i)
+                        tableToRow.put(tables.get(i).tableName, rows.get(i));
+                    if (onConditions != null) {
+                        if (!evaluateMultipleCondition(onConditions, tableToRow, tableToColumns, null)) continue;
+                    } else {
+                        if (!finalNaturalJoinPredicate.apply(rows)) continue;
+                    }
+                    if (whereCtx != null && !evaluateMultipleCondition(whereCtx, tableToRow, tableToColumns, null))
+                        continue;
+                    current = rows;
+                    currentUsed = false;
+                    return;
+                }
+            }
+        };
+
+        if (naturalJoinProjector != null) {
+            var data = new ArrayList<Row>();
+            while (joinedTableIterator.hasNext()) {
+                data.add(naturalJoinProjector.apply(joinedTableIterator.next()));
+            }
+            return new QueryResult(data, naturalJoinColumnsName);
+        }
+
+        return null;
+    }
+
     /**
      * TODO: JOIN, PROJECTION
      * 表格项查询
@@ -382,9 +540,19 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
     @Override
     public QueryResult visitSelect_stmt(SQLParser.Select_stmtContext ctx) {
         try {
-            var table = GetCurrentDB().get(ctx.table_query(0).table_name(0).getText());
-            return new QueryResult(filterTable(ctx.multiple_condition(), table), table.columns.stream().map(Column::getColumnName).toList());
+            var tableQueries = ctx.table_query();
+            if (tableQueries.size() > 1) throw new Exception("doesn't support Cartesian product");
+            var tableQuery = tableQueries.get(0);
+            var tables = tableQuery.table_name();
+            if (tables.size() > 1) {
+                return joinFilterProjectTables(tableQuery, ctx.multiple_condition());
+            } else {
+                var table = GetCurrentDB().get(tableQuery.table_name(0).getText());
+                return new QueryResult(filterSingleTable(ctx.multiple_condition(), table), table.columns.stream().map(Column::getColumnName).toList());
+            }
+
         } catch (Exception e) {
+            e.printStackTrace();
             return new QueryResult(e.getMessage());
         }
     }
