@@ -60,13 +60,11 @@ public class Table implements Iterable<Row> {
 
         for (int i = 0; i < this.columns.size(); i++) {
             if (this.columns.get(i).primary) {
-                if (this.primaryIndex >= 0)
-                    throw new MultiPrimaryKeyException(this.tableName);
+                if (this.primaryIndex >= 0) throw new MultiPrimaryKeyException(this.tableName);
                 this.primaryIndex = i;
             }
         }
-        if (this.primaryIndex < 0)
-            throw new MultiPrimaryKeyException(this.tableName);
+        if (this.primaryIndex < 0) throw new MultiPrimaryKeyException(this.tableName);
 
         // TODO initiate lock status.
 
@@ -102,9 +100,8 @@ public class Table implements Iterable<Row> {
         try {
             // TODO lock control
             this.checkRowValidInTable(row);
-            if (this.containsRow(row))
-                throw new DuplicateKeyException();
-            this.index.put(row.getEntries().get(this.primaryIndex), row);
+            if (containsRow(row)) throw new DuplicateKeyException();
+            index.put(row.getEntries().get(this.primaryIndex), row);
         } finally {
             // TODO lock control
         }
@@ -114,23 +111,19 @@ public class Table implements Iterable<Row> {
         try {
             // TODO lock control.
             this.checkRowValidInTable(row);
-            if (!this.containsRow(row))
-                throw new KeyNotExistException();
-            this.index.remove(row.getEntries().get(this.primaryIndex));
+            if (!this.containsRow(row)) throw new KeyNotExistException();
+            index.remove(row.getEntries().get(this.primaryIndex));
         } finally {
             // TODO lock control.
         }
     }
 
-    public void update(Cell primaryCell, Row newRow) {
+    public void update(Cell key, Row newRow) {
         try {
             // TODO lock control.
             this.checkRowValidInTable(newRow);
-            Row oldRow = this.get(primaryCell);
-            if (this.containsRow(newRow))
-                throw new DuplicateKeyException();   // 要么删并插入，要么抛出异常
-            this.index.remove(primaryCell);
-            this.index.put(newRow.getEntries().get(this.primaryIndex), newRow);
+            if (!index.contains(key)) throw new KeyNotExistException();
+            index.update(key, newRow);
         } finally {
             // TODO lock control.
         }
@@ -161,8 +154,7 @@ public class Table implements Iterable<Row> {
             if (!tableFolder.exists() ? !tableFolder.mkdirs() : !tableFolder.isDirectory())
                 throw new FileIOException(this.getTableFolderPath() + " when deserialize");
             File tableFile = new File(this.getTablePath());
-            if (!tableFile.exists())
-                return new ArrayList<>();
+            if (!tableFile.exists()) return new ArrayList<>();
             FileInputStream fileInputStream = new FileInputStream(this.getTablePath());
             ObjectInputStream objectInputStream = new ObjectInputStream(fileInputStream);
             ArrayList<Row> rowsOnDisk = new ArrayList<>();
@@ -252,7 +244,7 @@ public class Table implements Iterable<Row> {
     }
 
     private Boolean containsRow(Row row) {
-        return this.index.contains(row.getEntries().get(this.primaryIndex));
+        return index.contains(row.getEntries().get(primaryIndex));
     }
 
     public String getTableFolderPath() {

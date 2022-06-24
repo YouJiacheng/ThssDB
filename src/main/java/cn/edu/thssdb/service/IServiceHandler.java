@@ -114,7 +114,7 @@ public class IServiceHandler implements IService.Iface {
       for (QueryResult queryResult : results) {
         if (queryResult == null)
           resp.addToColumnsList("null");
-        else resp.addToColumnsList(queryResult.errorMessage);
+        else resp.addToColumnsList(queryResult.message);
       }
     }
 

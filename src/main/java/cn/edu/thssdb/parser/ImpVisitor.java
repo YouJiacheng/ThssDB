@@ -125,9 +125,7 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
         return "Drop table " + ctx.table_name().getText() + ".";
     }
 
-    /**
-     * 创建表格
-     */
+
     private ColumnType getColumnType(SQLParser.Type_nameContext ctx) {
         if (ctx.T_INT() != null) return ColumnType.INT;
         if (ctx.T_LONG() != null) return ColumnType.LONG;
@@ -156,6 +154,9 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
         return Collections.emptyList();
     }
 
+    /**
+     * 创建表格
+     */
     @Override
     public String visitCreate_table_stmt(SQLParser.Create_table_stmtContext ctx) {
         try {
@@ -180,7 +181,6 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
     }
 
     /**
-     * TODO
      * 显示表格
      */
     public String visitShow_meta_stmt(SQLParser.Show_meta_stmtContext ctx) {
@@ -201,7 +201,6 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
     }
 
     /**
-     * TODO
      * 表格项插入
      */
     @Override
@@ -334,7 +333,6 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
     }
 
     /**
-     * TODO
      * 表格项删除
      */
     @Override
@@ -351,7 +349,6 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
     }
 
     /**
-     * TODO
      * 表格项更新
      */
     @Override
@@ -362,8 +359,7 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
             var columns = table.columns;
             var setColumnName = ctx.column_name().getText();
             var setIdx = columns.stream().map(Column::getColumnName).toList().indexOf(setColumnName);
-            if (setIdx < 0)
-                throw new Exception("column " + setColumnName + " doesn't exist in table definition");
+            if (setIdx < 0) throw new Exception("column " + setColumnName + " doesn't exist in table definition");
             var primaryIdx = table.primaryIndex;
             var filteredTable = filterTable(ctx.multiple_condition(), table);
             for (var row : filteredTable) {
@@ -380,12 +376,17 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
     }
 
     /**
-     * TODO
+     * TODO: JOIN, PROJECTION
      * 表格项查询
      */
     @Override
     public QueryResult visitSelect_stmt(SQLParser.Select_stmtContext ctx) {
-        return null;
+        try {
+            var table = GetCurrentDB().get(ctx.table_query(0).table_name(0).getText());
+            return new QueryResult(filterTable(ctx.multiple_condition(), table), table.columns.stream().map(Column::getColumnName).toList());
+        } catch (Exception e) {
+            return new QueryResult(e.getMessage());
+        }
     }
 
     /**
