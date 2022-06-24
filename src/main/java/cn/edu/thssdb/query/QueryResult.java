@@ -9,12 +9,6 @@ import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 
-/**
- * Designed to hold general query result:
- * In SQL result, the returned answer could be QueryTable OR an error message
- * For errors, resultType = QueryResultType.MESSAGE, see Construct method.
- * For results, it will hold QueryTable.
- */
 
 public class QueryResult {
 
@@ -26,12 +20,6 @@ public class QueryResult {
 
     public List<Row> results;
 
-    public QueryResult(QueryTable[] queryTables) {
-        resultType = QueryResultType.SELECT;
-        message = null;
-        // TODO
-    }
-
     public QueryResult(List<Row> rows, List<String> names) {
         resultType = QueryResultType.SELECT;
         message = null;
@@ -42,16 +30,6 @@ public class QueryResult {
     public QueryResult(String msg) {
         resultType = QueryResultType.MESSAGE;
         message = msg;
-    }
-
-    public static Row combineRow(LinkedList<Row> rows) {
-        // TODO
-        return null;
-    }
-
-    public Row generateQueryRecord(Row row) {
-        // TODO
-        return null;
     }
 
     public List<String> getColumnNames() {
