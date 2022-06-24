@@ -3,19 +3,18 @@ package cn.edu.thssdb.parser;
 
 // TODO: add logic for some important cases, refer to given implementations and SQLBaseVisitor.java for structures
 
+import cn.edu.thssdb.common.Global;
 import cn.edu.thssdb.exception.DatabaseNotExistException;
 import cn.edu.thssdb.query.QueryResult;
-import cn.edu.thssdb.schema.Column;
-import cn.edu.thssdb.schema.Database;
-import cn.edu.thssdb.schema.Manager;
+import cn.edu.thssdb.schema.*;
 import cn.edu.thssdb.type.ColumnType;
 import org.antlr.v4.runtime.RuleContext;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.stream.Collector;
-import java.util.stream.Collectors;
+import java.util.TreeMap;
+import java.util.stream.IntStream;
 
 /**
  * When use SQL sentence, e.g., "SELECT avg(A) FROM TableX;"
@@ -163,16 +162,14 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
     public String visitCreate_table_stmt(SQLParser.Create_table_stmtContext ctx) {
         try {
             var primaryKeys = getPrimaryKeys(ctx);
-            var columns = ctx.column_def().stream().map(
-                    it -> {
-                        var name = it.column_name().getText();
-                        var type = getColumnType(it.type_name());
-                        var maxLen = getMaxLength(it.type_name());
-                        var primary = primaryKeys.contains(name);
-                        var notNull = getNotNull(it) || primary; // primary key is not null!
-                        return new Column(name, type, primary, notNull, maxLen);
-                    }
-            ).toArray(Column[]::new);
+            var columns = ctx.column_def().stream().map(it -> {
+                var name = it.column_name().getText();
+                var type = getColumnType(it.type_name());
+                var maxLen = getMaxLength(it.type_name());
+                var primary = primaryKeys.contains(name);
+                var notNull = getNotNull(it) || primary; // primary key is not null!
+                return new Column(name, type, primary, notNull, maxLen);
+            }).toArray(Column[]::new);
             GetCurrentDB().create(ctx.table_name().getText(), columns);
             return "Create table " + ctx.table_name().getText() + ".";
         } catch (Exception e) {
@@ -190,10 +187,10 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
             var s = new StringBuilder();
             s.append(table.tableName);
             s.append("(\n");
-            table.columns.forEach(c -> {
+            for (var c : table.columns) {
                 s.append(c.representation());
                 s.append("\n");
-            });
+            }
             s.append(")");
             return s.toString();
         } catch (Exception e) {
@@ -207,7 +204,58 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
      */
     @Override
     public String visitInsert_stmt(SQLParser.Insert_stmtContext ctx) {
-        return null;
+        try {
+            var table = GetCurrentDB().get(ctx.table_name().getText());
+            var table_columns = table.columns;
+            var table_columns_name = table_columns.stream().map(Column::getColumnName).toList();
+            var columns_name = ctx.column_name().stream().map(RuleContext::getText).toList();
+            if (columns_name.isEmpty()) {
+                columns_name = table_columns_name;
+            }
+            var columns_idx = new ArrayList<Integer>();
+            for (var name : columns_name) {
+                var idx = table_columns_name.indexOf(name);
+                if (idx == -1) {
+                    throw new Exception("column " + name + " doesn't exist in table definition");
+                }
+                columns_idx.add(idx);
+            }
+            var columns = columns_idx.stream().map(table_columns::get).toList();
+            var num_table_columns = table_columns.size();
+            var num_columns = columns_name.size();
+            for (var e : ctx.value_entry()) {
+                var entry_map = new TreeMap<Integer, Cell>();
+                var literal_values = e.literal_value();
+                if (literal_values.size() != num_columns) {
+                    throw new Exception("arity of value is not consistent with column");
+                }
+                System.out.println(literal_values.stream().map(RuleContext::getText).toList());
+                for (int i = 0; i < num_columns; ++i) {
+                    var v = literal_values.get(i);
+                    String s;
+                    if (v.K_NULL() != null) {
+                        s = Global.ENTRY_NULL; // parseEntry only recognize "null"
+                    } else {
+                        s = v.getText();
+                    }
+                    entry_map.put(columns_idx.get(i), Column.parseEntry(s, columns.get(i)));
+                }
+                // complete unspecified columns
+                var entry_completed = new ArrayList<Cell>();
+                for (int i = 0; i < num_table_columns; ++i) {
+                    var c = table_columns.get(i);
+                    if (entry_map.containsKey(i)) {
+                        entry_completed.add(entry_map.get(i));
+                    } else {
+                        entry_completed.add(Column.parseEntry(Global.ENTRY_NULL, c));
+                    }
+                }
+                table.insert(new Row(entry_completed));
+            }
+            return "INSERT succeed";
+        } catch (Exception e) {
+            return e.getMessage();
+        }
     }
 
     /**
