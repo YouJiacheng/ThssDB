@@ -298,13 +298,13 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
     }
 
     private Cell evaluateComparer(SQLParser.ComparerContext ctx, Map<String, Row> tableToRow, Map<String, List<Column>> tableToColumns, String tableName) throws Exception {
-        var col_full = ctx.column_full_name();
-        if (col_full != null) {
-            if (col_full.table_name() != null) tableName = col_full.table_name().getText();
+        var columnFullName = ctx.column_full_name();
+        if (columnFullName != null) {
+            if (columnFullName.table_name() != null) tableName = columnFullName.table_name().getText();
             var columns = tableToColumns.get(tableName);
-            var col_name = col_full.column_name().getText();
-            var idx = columns.stream().map(Column::getColumnName).toList().indexOf(col_name);
-            if (idx == -1) throw new Exception("column " + col_name + " doesn't exist in table definition");
+            var columnName = columnFullName.column_name().getText();
+            var idx = columns.stream().map(Column::getColumnName).toList().indexOf(columnName);
+            if (idx == -1) throw new Exception("column " + columnName + " doesn't exist in table definition");
             return tableToRow.get(tableName).getEntries().get(idx);
         }
         var v = ctx.literal_value();
@@ -320,6 +320,19 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
         return new Cell(null);
     }
 
+    private List<Row> filterTable(SQLParser.Multiple_conditionContext ctx, Table table) throws Exception {
+        var index = table.index;
+        var name = table.tableName;
+        var data = new ArrayList<Row>();
+        for (var pair : index) {
+            var row = pair.right;
+            if (ctx == null || evaluateMultipleCondition(ctx, Map.of(name, row), Map.of(name, table.columns), name)) {
+                data.add(row);
+            }
+        }
+        return data;
+    }
+
     /**
      * TODO
      * 表格项删除
@@ -327,7 +340,11 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
     @Override
     public String visitDelete_stmt(SQLParser.Delete_stmtContext ctx) {
         try {
-            return "TODO";
+            var table = GetCurrentDB().get(ctx.table_name().getText());
+            var filteredTable = filterTable(ctx.multiple_condition(), table);
+            for (var row : filteredTable)
+                table.delete(row);
+            return "DELETE " + filteredTable.size() + " row(s)";
         } catch (Exception e) {
             return e.getMessage();
         }
@@ -339,7 +356,27 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
      */
     @Override
     public String visitUpdate_stmt(SQLParser.Update_stmtContext ctx) {
-        return null;
+        try {
+            var table = GetCurrentDB().get(ctx.table_name().getText());
+            var name = table.tableName;
+            var columns = table.columns;
+            var setColumnName = ctx.column_name().getText();
+            var setIdx = columns.stream().map(Column::getColumnName).toList().indexOf(setColumnName);
+            if (setIdx < 0)
+                throw new Exception("column " + setColumnName + " doesn't exist in table definition");
+            var primaryIdx = table.primaryIndex;
+            var filteredTable = filterTable(ctx.multiple_condition(), table);
+            for (var row : filteredTable) {
+                var entries = new ArrayList<>(row.getEntries());
+                var primaryKey = entries.get(primaryIdx);
+                var val = evaluateExpression(ctx.expression(), Map.of(name, row), Map.of(name, columns), name);
+                entries.set(setIdx, val);
+                table.update(primaryKey, new Row(entries));
+            }
+            return "UPDATE " + filteredTable.size() + " row(s)";
+        } catch (Exception e) {
+            return e.getMessage();
+        }
     }
 
     /**

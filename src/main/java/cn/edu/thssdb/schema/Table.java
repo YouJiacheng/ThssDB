@@ -22,7 +22,7 @@ public class Table implements Iterable<Row> {
     public String tableName;
     public ArrayList<Column> columns;
     public BPlusTree<Cell, Row> index;
-    private int primaryIndex;
+    public int primaryIndex;
 
     // ADD lock variables for S, X locks and etc here.
 
