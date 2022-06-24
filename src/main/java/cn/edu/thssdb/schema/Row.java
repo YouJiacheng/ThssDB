@@ -52,7 +52,7 @@ public class Row implements Serializable {
     public ArrayList<String> toStringList() {
         ArrayList<String> valueList = new ArrayList<>();
         if (entries == null) return valueList;
-        for (Cell cell : this.entries)
+        for (Cell cell : entries)
             valueList.add(cell.toString());
         return valueList;
     }

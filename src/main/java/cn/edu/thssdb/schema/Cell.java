@@ -36,6 +36,7 @@ public class Cell implements Serializable, Comparable<Cell> {
     }
 
     public String toString() {
+        if (value == null) return Global.ENTRY_NULL;
         return value.toString();
     }
 
