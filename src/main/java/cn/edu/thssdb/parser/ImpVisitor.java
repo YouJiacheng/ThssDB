@@ -10,10 +10,8 @@ import cn.edu.thssdb.schema.*;
 import cn.edu.thssdb.type.ColumnType;
 import org.antlr.v4.runtime.RuleContext;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.TreeMap;
+import java.lang.reflect.Array;
+import java.util.*;
 import java.util.stream.IntStream;
 
 /**
@@ -262,13 +260,77 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
         }
     }
 
+    private boolean evaluateMultipleCondition(SQLParser.Multiple_conditionContext ctx, Map<String, Row> tableToRow, Map<String, List<Column>> tableToColumns, String tableName) throws Exception {
+        if (ctx.condition() != null) return evaluateCondition(ctx.condition(), tableToRow, tableToColumns, tableName);
+        var lhs = evaluateMultipleCondition(ctx.multiple_condition(0), tableToRow, tableToColumns, tableName);
+        var rhs = evaluateMultipleCondition(ctx.multiple_condition(1), tableToRow, tableToColumns, tableName);
+        if (ctx.AND() != null) return lhs && rhs;
+        if (ctx.OR() != null) return lhs || rhs;
+        throw new Exception();
+    }
+
+    private boolean evaluateCondition(SQLParser.ConditionContext ctx, Map<String, Row> tableToRow, Map<String, List<Column>> tableToColumns, String tableName) throws Exception {
+        var lhs = evaluateExpression(ctx.expression(0), tableToRow, tableToColumns, tableName);
+        var rhs = evaluateExpression(ctx.expression(1), tableToRow, tableToColumns, tableName);
+        var cp = ctx.comparator();
+        assert cp != null;
+        if (cp.EQ() != null) return lhs.SQLCompareTo(rhs, List.of(0));
+        if (cp.NE() != null) return lhs.SQLCompareTo(rhs, List.of(-1, 1));
+        if (cp.LE() != null) return lhs.SQLCompareTo(rhs, List.of(-1, 0));
+        if (cp.GE() != null) return lhs.SQLCompareTo(rhs, List.of(0, 1));
+        if (cp.LT() != null) return lhs.SQLCompareTo(rhs, List.of(-1));
+        if (cp.GT() != null) return lhs.SQLCompareTo(rhs, List.of(1));
+        throw new Exception();
+    }
+
+    private Cell evaluateExpression(SQLParser.ExpressionContext ctx, Map<String, Row> tableToRow, Map<String, List<Column>> tableToColumns, String tableName) throws Exception {
+        if (ctx.comparer() != null) {
+            return evaluateComparer(ctx.comparer(), tableToRow, tableToColumns, tableName);
+        }
+        var subExpr = ctx.expression();
+        var arg0 = evaluateExpression(subExpr.get(0), tableToRow, tableToColumns, tableName);
+        var arg1 = subExpr.size() > 1 ? evaluateExpression(subExpr.get(1), tableToRow, tableToColumns, tableName) : null;
+        if (ctx.ADD() != null) return arg0.arithmetic(arg1, Double::sum);
+        if (ctx.SUB() != null) return arg0.arithmetic(arg1, (a, b) -> a - b);
+        if (ctx.MUL() != null) return arg0.arithmetic(arg1, (a, b) -> a * b);
+        if (ctx.DIV() != null) return arg0.arithmetic(arg1, (a, b) -> a / b);
+        return arg0; // (expression) case
+    }
+
+    private Cell evaluateComparer(SQLParser.ComparerContext ctx, Map<String, Row> tableToRow, Map<String, List<Column>> tableToColumns, String tableName) throws Exception {
+        var col_full = ctx.column_full_name();
+        if (col_full != null) {
+            if (col_full.table_name() != null) tableName = col_full.table_name().getText();
+            var columns = tableToColumns.get(tableName);
+            var col_name = col_full.column_name().getText();
+            var idx = columns.stream().map(Column::getColumnName).toList().indexOf(col_name);
+            if (idx == -1) throw new Exception("column " + col_name + " doesn't exist in table definition");
+            return tableToRow.get(tableName).getEntries().get(idx);
+        }
+        var v = ctx.literal_value();
+        assert v != null;
+        if (v.NUMERIC_LITERAL() != null) {
+            return new Cell(Double.valueOf(v.getText()));
+        }
+        if (v.STRING_LITERAL() != null) {
+            var s = v.getText();
+            return new Cell(s.substring(1, s.length() - 1));
+        }
+        assert v.K_NULL() != null;
+        return new Cell(null);
+    }
+
     /**
      * TODO
      * 表格项删除
      */
     @Override
     public String visitDelete_stmt(SQLParser.Delete_stmtContext ctx) {
-        return null;
+        try {
+            return "TODO";
+        } catch (Exception e) {
+            return e.getMessage();
+        }
     }
 
     /**
