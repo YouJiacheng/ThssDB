@@ -244,7 +244,7 @@ public class Table implements Iterable<Row> {
             } else {
                 if (!entryValueType.equals(column.getColumnType().name()))
                     throw new ValueFormatInvalidException("(when check row valid in table)");
-                Comparable entryValue = row.getEntries().get(i).value;
+                Object entryValue = row.getEntries().get(i).value;
                 if (entryValueType.equals(STRING.name()) && ((String) entryValue).length() > column.getMaxLength())
                     throw new ValueExceedException(column.getColumnName(), ((String) entryValue).length(), column.getMaxLength(), "(when check row valid in table)");
             }
@@ -270,7 +270,7 @@ public class Table implements Iterable<Row> {
     public String toString() {
         StringBuilder s = new StringBuilder("Table " + this.tableName + ": ");
         for (Column column : this.columns) s.append("\t(").append(column.toString()).append(')');
-        return s.toString() + "\n";
+        return s + "\n";
     }
 
 }

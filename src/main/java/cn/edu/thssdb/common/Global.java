@@ -20,7 +20,7 @@ public class Global {
 
   public static final String ROW_EMPTY = "EMPTY_ROW";
   public static final String DATABASE_EMPTY = "EMPTY_DATABASE";
-  public static final String ENTRY_NULL = "null";
+  public static final String ENTRY_NULL = "NULL";
 
   public static final String DBMS_DIR = "thssdb";
   public static final String META_SUFFIX = "_meta";

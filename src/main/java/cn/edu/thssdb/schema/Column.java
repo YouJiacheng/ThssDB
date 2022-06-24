@@ -25,7 +25,8 @@ public class Column implements Comparable<Column> {
         return name.compareTo(e.name);
     }
 
-    public String dumps() { // for WAL
+    @Override
+    public String toString() { // for WAL
         return name + ',' + type + ',' + primary + ',' + notNull + ',' + maxLength;
     }
 
