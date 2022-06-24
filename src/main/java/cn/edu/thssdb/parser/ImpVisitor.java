@@ -187,7 +187,15 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
     public String visitShow_meta_stmt(SQLParser.Show_meta_stmtContext ctx) {
         try {
             var table = GetCurrentDB().get(ctx.table_name().getText());
-            return table.tableName; // TODO
+            var s = new StringBuilder();
+            s.append(table.tableName);
+            s.append("(\n");
+            table.columns.forEach(c -> {
+                s.append(c.representation());
+                s.append("\n");
+            });
+            s.append(")");
+            return s.toString();
         } catch (Exception e) {
             return e.getMessage();
         }

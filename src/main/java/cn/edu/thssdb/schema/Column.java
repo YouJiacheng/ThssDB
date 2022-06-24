@@ -40,9 +40,9 @@ public class Column implements Comparable<Column> {
             s.append(")");
         }
         if (primary) {
-            s.append(" Primary Key");
+            s.append(" PRIMARY KEY");
         } else if (notNull) { // primary key implies not null, don't duplicate
-            s.append(" Not Null");
+            s.append(" NOT NULL");
         }
         return s.toString();
     }
