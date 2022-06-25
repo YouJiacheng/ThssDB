@@ -79,24 +79,24 @@ public class IServiceHandler implements IService.Iface {
 
         String command = req.statement;
         String[] statements = command.split(";");
-        ArrayList<QueryResult> results = new ArrayList<>();
+        var results = new ArrayList<QueryResult>();
 
         for (String statement : statements) {
             statement = statement.trim();
             if (statement.length() == 0) continue;
             String cmd_head = command.split("\\s+")[0];
-            List<QueryResult> queryResults;
+            QueryResult queryResult;
             if ((Arrays.asList(CMD_HEADS).contains(cmd_head.toLowerCase())) && !manager.currentSessions.contains(session)) {
                 sqlHandler.evaluate("begin transaction", session);
-                queryResults = sqlHandler.evaluate(statement, session);
+                queryResult = sqlHandler.evaluate(statement, session);
                 sqlHandler.evaluate("commit", session);
-            } else queryResults = sqlHandler.evaluate(statement, session);
-            if (queryResults == null || queryResults.size() == 0) {
+            } else queryResult = sqlHandler.evaluate(statement, session);
+            if (queryResult == null) {
                 resp.setStatus(new Status(Global.SUCCESS_CODE));
                 resp.setIsAbort(true);
                 return resp;
             }
-            results.addAll(queryResults);
+            results.add(queryResult);
         }
         resp.setStatus(new Status(Global.SUCCESS_CODE));
         if (results.isEmpty()) {

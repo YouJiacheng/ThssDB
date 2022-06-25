@@ -6,6 +6,8 @@ import cn.edu.thssdb.parser.SQLHandler;
 import cn.edu.thssdb.common.Global;
 
 import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -42,16 +44,14 @@ public class Manager {
         sqlHandler = new SQLHandler(this);
         x_lockDict = new HashMap<>();
         File managerFolder = new File(Global.DBMS_DIR + File.separator + "data");
-        if (!managerFolder.exists())
-            managerFolder.mkdirs();
-        this.recover();
+        if (!managerFolder.exists()) managerFolder.mkdirs();
+        recover();
     }
 
     public void deleteDatabase(String databaseName) {
         try {
             // TODO: add lock control
-            if (!databases.containsKey(databaseName))
-                throw new DatabaseNotExistException(databaseName);
+            if (!databases.containsKey(databaseName)) throw new DatabaseNotExistException(databaseName);
             Database database = databases.get(databaseName);
             database.dropDatabase();
             databases.remove(databaseName);
@@ -64,8 +64,7 @@ public class Manager {
     public void switchDatabase(String databaseName) {
         try {
             // TODO: add lock control
-            if (!databases.containsKey(databaseName))
-                throw new DatabaseNotExistException(databaseName);
+            if (!databases.containsKey(databaseName)) throw new DatabaseNotExistException(databaseName);
             currentDatabase = databases.get(databaseName);
         } finally {
             // TODO: add lock control
@@ -102,8 +101,7 @@ public class Manager {
     public Database get(String databaseName) {
         try {
             // TODO: add lock control
-            if (!databases.containsKey(databaseName))
-                throw new DatabaseNotExistException(databaseName);
+            if (!databases.containsKey(databaseName)) throw new DatabaseNotExistException(databaseName);
             return databases.get(databaseName);
         } finally {
             // TODO: add lock control
@@ -113,13 +111,11 @@ public class Manager {
     public void createDatabaseIfNotExists(String databaseName) {
         try {
             // TODO: add lock control
-            if (!databases.containsKey(databaseName))
-                databases.put(databaseName, new Database(databaseName));
+            if (!databases.containsKey(databaseName)) databases.put(databaseName, new Database(databaseName));
             if (currentDatabase == null) {
                 try {
                     // TODO: add lock control
-                    if (!databases.containsKey(databaseName))
-                        throw new DatabaseNotExistException(databaseName);
+                    if (!databases.containsKey(databaseName)) throw new DatabaseNotExistException(databaseName);
                     currentDatabase = databases.get(databaseName);
                 } finally {
                     // TODO: add lock control
@@ -167,12 +163,12 @@ public class Manager {
         }
     }
 
-    static class logItem {
+    static class LogItem {
         public long session;
         public String statement;
         public boolean committed;
 
-        logItem(long s, String st) {
+        LogItem(long s, String st) {
             this.session = s;
             this.statement = st;
             this.committed = false;
@@ -180,75 +176,48 @@ public class Manager {
     }
 
     // TODO: read Log in transaction to recover.
-    public void readLog(String databaseName) {
-        String logFilename = getDatabaseLogFilePath(databaseName);
-        try {
-//      FileReader reader = new FileReader(logFilename);
-            File logFile = new File(logFilename);
-            System.out.println("??!! try to recover database " + databaseName);
-            InputStreamReader reader = new InputStreamReader(new FileInputStream(logFile));
-            BufferedReader bufferedReader = new BufferedReader(reader);
-
-            String logsession;
-            String statement;
-            var logItems = new ArrayList<logItem>();
-            while ((logsession = bufferedReader.readLine()) != null) {
-                // retrieve
-                if ((statement = bufferedReader.readLine()) != null) {
-                    long session = Long.parseLong(logsession);
-                    logItems.add(new logItem(session, statement));
-                    // System.out.println("??!! session: " + session + " statement: " + statement);
-                    // sqlHandler.evaluate(statement, -session-2);
-                }
-            }
-            bufferedReader.close();
-            reader.close();
-
-            // process, get committed state of every log
-            var reversedLogItems = new ArrayList<>(logItems); // shallow copy
-            Collections.reverse(reversedLogItems);
-            var committedSessionSet = new HashSet<Long>();
-            for (var i : reversedLogItems) {
-                if (i.statement.equals(Global.LOG_COMMIT))
-                    committedSessionSet.add(i.session);
-                if (committedSessionSet.contains(i.session))
-                    i.committed = true;
-                if (i.statement.equals(Global.LOG_BEGIN_TRANSACTION))
-                    committedSessionSet.remove(i.session);
-            }
-
-            // recover the committed logs
-            for (var i : logItems) {
-                if (i.committed) {
-                    System.out.println("??!! session: " + i.session + " statement: " + i.statement);
-                    sqlHandler.evaluate(i.statement, -i.session - 2);
-                } else {
-                    System.out.println("??!! UNCOMMITTED ITEM session: " + i.session + " statement: " + i.statement);
-                }
-            }
-
-        } catch (Exception e) {
-            throw new FileIOException(logFilename);
+    public void readLog(String databaseName) throws IOException {
+        System.out.println("??!! try to recover database " + databaseName);
+        var logLines = Files.readAllLines(Path.of(getDatabaseLogFilePath(databaseName)));
+        var logItems = new ArrayList<LogItem>();
+        for (var it = logLines.iterator(); it.hasNext(); ) {
+            var session = Long.parseLong(it.next());
+            logItems.add(new LogItem(session, it.next()));
         }
+
+        // process, get committed state of every log
+        var reversedLogItems = new ArrayList<>(logItems); // shallow copy
+        Collections.reverse(reversedLogItems);
+        var committedSessionSet = new HashSet<Long>();
+        for (var i : reversedLogItems) {
+            if (i.statement.equals(Global.LOG_COMMIT)) committedSessionSet.add(i.session);
+            if (committedSessionSet.contains(i.session)) i.committed = true;
+            if (i.statement.equals(Global.LOG_BEGIN_TRANSACTION)) committedSessionSet.remove(i.session);
+        }
+
+        // recover the committed logs
+        for (var i : logItems) {
+            if (i.committed) {
+                System.out.println("??!! session: " + i.session + " statement: " + i.statement);
+                sqlHandler.evaluate(i.statement, -i.session - 2);
+            } else {
+                System.out.println("??!! UNCOMMITTED ITEM session: " + i.session + " statement: " + i.statement);
+            }
+        }
+
     }
 
     public void recover() {
-        File managerDataFile = new File(Manager.getManagerDataFilePath());
-        if (!managerDataFile.isFile()) return;
         try {
             System.out.println("??!! try to recover manager");
-            InputStreamReader reader = new InputStreamReader(new FileInputStream(managerDataFile));
-            BufferedReader bufferedReader = new BufferedReader(reader);
-            String line;
-            while ((line = bufferedReader.readLine()) != null) {
-                System.out.println("??!!" + line);
-                createDatabaseIfNotExists(line);
-                readLog(line);
+            var databases = Files.readAllLines(Path.of(getManagerDataFilePath()));
+            for (var database : databases) {
+                System.out.println("??!!" + database);
+                createDatabaseIfNotExists(database);
+                readLog(database);
             }
-            bufferedReader.close();
-            reader.close();
         } catch (Exception e) {
-            throw new FileIOException(managerDataFile.getName());
+            e.printStackTrace();
         }
     }
 
