@@ -486,8 +486,6 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
             if (naturalJoinColumnsName == null) throw new Exception("Ambiguous projection *");
             projectedColumnsName.addAll(naturalJoinColumnsName);
         }
-        var tableToColumnsNameWithDefault = new HashMap<>(tableToColumnsName);
-        if (naturalJoinColumnsName != null) tableToColumnsNameWithDefault.put(defaultTableName, naturalJoinColumnsName);
         while (joinedTableIterator.hasNext()) {
             var rows = joinedTableIterator.next();
             var joinedRow = finalNaturalJoinProjector.apply(rows);
@@ -496,7 +494,7 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
             var projected = new ArrayList<Cell>();
             for (var proj : projections) {
                 if (proj.column_full_name() != null) {
-                    projected.add(evaluateColumn(proj.column_full_name(), tableToRow, tableToColumnsNameWithDefault, defaultTableName));
+                    projected.add(evaluateColumn(proj.column_full_name(), tableToRow, tableToColumnsName, defaultTableName));
                     continue;
                 }
                 if (proj.table_name() != null) { // assert tableToRow contains tableName
