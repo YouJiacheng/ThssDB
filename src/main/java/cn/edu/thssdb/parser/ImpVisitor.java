@@ -520,7 +520,6 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
     }
 
     /**
-     * TODO: JOIN, PROJECTION
      * 表格项查询
      */
     @Override
@@ -529,7 +528,6 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
             var tableQueries = ctx.table_query();
             if (tableQueries.size() > 1) throw new Exception("doesn't support Cartesian product");
             return joinFilterProjectTables(tableQueries.get(0), ctx.multiple_condition(), ctx.result_column());
-
         } catch (Exception e) {
             return new QueryResult(e.getMessage());
         }
