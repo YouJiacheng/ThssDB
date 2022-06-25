@@ -64,18 +64,6 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
         return null;
     }
 
-    @Override
-    public ArrayList<QueryResult> visitParse(SQLParser.ParseContext ctx) {
-        return visitSql_stmt_list(ctx.sql_stmt_list());
-    }
-
-    @Override
-    public ArrayList<QueryResult> visitSql_stmt_list(SQLParser.Sql_stmt_listContext ctx) {
-        ArrayList<QueryResult> ret = new ArrayList<>();
-        for (SQLParser.Sql_stmtContext subCtx : ctx.sql_stmt()) ret.add(visitSql_stmt(subCtx));
-        return ret;
-    }
-
     /**
      * 创建数据库
      */

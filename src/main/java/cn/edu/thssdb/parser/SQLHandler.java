@@ -27,7 +27,7 @@ public class SQLHandler {
     private final static String BEGIN = "begin";
     private final static String COMMIT = "commit";
     private final static String SELECT = "select";
-    private static String[] CMD_SET_WITHOUT_SELECT = {INSERT, DELETE, UPDATE, BEGIN, COMMIT};
+    private static final String[] CMD_SET_WITHOUT_SELECT = {INSERT, DELETE, UPDATE, BEGIN, COMMIT};
 
     public SQLHandler(Manager manager) {
         this.manager = manager;
@@ -40,7 +40,7 @@ public class SQLHandler {
         }
         System.out.println("session:" + session + "  " + statement);
         if (statement.equals(Global.LOG_BEGIN_TRANSACTION)) {
-            ArrayList<QueryResult> queryResults = new ArrayList<QueryResult>();
+            ArrayList<QueryResult> queryResults = new ArrayList<>();
             try {
                 if (!manager.currentSessions.contains(session)) {
                     manager.currentSessions.add(session);
@@ -58,7 +58,7 @@ public class SQLHandler {
         }
 
         if (statement.equals(Global.LOG_COMMIT)) {
-            ArrayList<QueryResult> queryResults = new ArrayList<QueryResult>();
+            ArrayList<QueryResult> queryResults = new ArrayList<>();
             try {
                 if (manager.currentSessions.contains(session)) {
                     Database currentDB = manager.getCurrentDatabase();
@@ -99,15 +99,21 @@ public class SQLHandler {
             queryResults.add(new QueryResult("commit transaction."));
             return queryResults;
         }
+        SQLParser.ParseContext ctx;
         try {
-            var ctx = parseStatement(statement);
-            var lockSTables = TableVisitor.visitLockS(ctx);
-            var lockXTables = TableVisitor.visitLockX(ctx);
-            return evaluateNoLock(ctx);
+            ctx = parseStatement(statement);
         } catch (Exception e) {
             String message = "Exception: illegal SQL statement! Error message: " + e.getMessage();
             return List.of(new QueryResult(message));
         }
+        ImpVisitor visitor = new ImpVisitor(manager);
+        var results = new ArrayList<QueryResult>();
+        for (var stmt : ctx.sql_stmt_list().sql_stmt()) {
+            var lockSTables = TableVisitor.visitLockS(stmt);
+            var lockXTables = TableVisitor.visitLockX(stmt);
+            results.add(visitor.visitSql_stmt(stmt));
+        }
+        return results;
     }
 
     public SQLParser.ParseContext parseStatement(String statement) {
@@ -120,11 +126,6 @@ public class SQLHandler {
         parser.removeErrorListeners();
         parser.addErrorListener(SQLErrorListener.instance);
         return parser.parse();
-    }
-
-    public List<QueryResult> evaluateNoLock(SQLParser.ParseContext ctx) {
-        ImpVisitor visitor = new ImpVisitor(manager);
-        return visitor.visitParse(ctx);
     }
 
 }
