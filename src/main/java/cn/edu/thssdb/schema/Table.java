@@ -15,7 +15,7 @@ import static cn.edu.thssdb.type.ColumnType.STRING;
 // TODO lock control, variables init.
 
 public class Table implements Iterable<Row> {
-    ReentrantReadWriteLock lock;
+    private ReentrantReadWriteLock lock;
     private String databaseName;
     public String tableName;
     public ArrayList<Column> columns;
@@ -25,27 +25,21 @@ public class Table implements Iterable<Row> {
     // ADD lock variables for S, X locks and etc here.
 
     // TODO: table/tuple level locks
-    public Boolean testSLock(Long sessionId) {
-        return false;
-    }
 
     public void takeSLock(Long sessionId) {
+        lock.readLock().lock();
     }
 
     public void releaseSLock(Long sessionId) {
+        lock.readLock().unlock();
     }
 
-    public Boolean testXLock(Long sessionId) {
-        // lock.writeLock().tryLock();
-        return false;
-    }
-
-    public Boolean takeXLock(Long sessionId) {
-        return lock.writeLock().tryLock();
+    public void takeXLock(Long sessionId) {
+        lock.writeLock().lock();
     } // 在test成功前提下拿X锁。返回值false表示session之前已拥有这个表的X锁。
 
     public void releaseXLock(Long sessionId) {
-        //lock.writeLock().unlock();
+        lock.writeLock().unlock();
     }
 
 
@@ -74,12 +68,12 @@ public class Table implements Iterable<Row> {
     private void recover() {
         // read from disk for recovering
         try {
-            lock.writeLock().lock();
+            //lock.writeLock().lock();
             ArrayList<Row> rowsOnDisk = deserialize();
             for (Row row : rowsOnDisk)
                 this.index.put(row.getEntries().get(this.primaryIndex), row);
         } finally {
-            lock.writeLock().unlock();
+            //lock.writeLock().unlock();
         }
     }
 
@@ -89,22 +83,22 @@ public class Table implements Iterable<Row> {
 
     public Row get(Cell primaryCell) {
         try {
-            lock.readLock().lock();
+            //lock.readLock().lock();
             return this.index.get(primaryCell);
         } finally {
-            lock.readLock().unlock();
+           // lock.readLock().unlock();
         }
     }
 
     public void insert(List<Row> rows) {
         try {
-            lock.writeLock().lock();
+            //lock.writeLock().lock();
             checkPutValid(rows, new TreeSet<>());
             // check all, then modify for atomic
             for (var row : rows)
                 index.put(row.getEntries().get(primaryIndex), row);
         } finally {
-            lock.writeLock().unlock();
+           // lock.writeLock().unlock();
         }
     }
 
@@ -130,19 +124,19 @@ public class Table implements Iterable<Row> {
 
     public void delete(List<Cell> keys) {
         try {
-            lock.writeLock().lock();
+            //lock.writeLock().lock();
             checkRemoveValid(keys);
             // check all, then modify for atomic
             for (var key : keys)
                 index.remove(key);
         } finally {
-            lock.writeLock().unlock();
+            //lock.writeLock().unlock();
         }
     }
 
     public void update(List<Cell> oldKeys, List<Row> newRows) {
         try {
-            lock.writeLock().lock();
+            //lock.writeLock().lock();
             checkPutValid(newRows, checkRemoveValid(oldKeys));
             // check all, then modify for atomic
             for (var key : oldKeys)
@@ -150,7 +144,7 @@ public class Table implements Iterable<Row> {
             for (var row : newRows)
                 index.put(row.getEntries().get(primaryIndex), row);
         } finally {
-            lock.writeLock().unlock();
+            //lock.writeLock().unlock();
         }
     }
 
@@ -200,16 +194,16 @@ public class Table implements Iterable<Row> {
 
     public void persist() {
         try {
-            lock.readLock().lock();
+            //lock.readLock().lock();
             serialize();
         } finally {
-            lock.readLock().unlock();
+            //lock.readLock().unlock();
         }
     }
 
     public void dropTable() { // remove table data file
         try {
-            lock.writeLock().lock();
+            //lock.writeLock().lock();
             File tableFolder = new File(this.getTableFolderPath());
             if (!tableFolder.exists() ? !tableFolder.mkdirs() : !tableFolder.isDirectory())
                 throw new FileIOException(this.getTableFolderPath() + " when dropTable");
@@ -217,7 +211,7 @@ public class Table implements Iterable<Row> {
             if (tableFile.exists() && !tableFile.delete())
                 throw new FileIOException(this.getTablePath() + " when dropTable");
         } finally {
-            lock.writeLock().unlock();
+           // lock.writeLock().unlock();
         }
     }
 
