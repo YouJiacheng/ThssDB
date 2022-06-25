@@ -6,6 +6,7 @@ import cn.edu.thssdb.service.IServiceHandler;
 import cn.edu.thssdb.common.Global;
 import org.apache.thrift.server.TServer;
 import org.apache.thrift.server.TSimpleServer;
+import org.apache.thrift.server.TThreadPoolServer;
 import org.apache.thrift.transport.TServerSocket;
 import org.apache.thrift.transport.TTransportException;
 import org.slf4j.Logger;
@@ -18,7 +19,9 @@ public class ThssDB {
     private static IServiceHandler handler;
     private static IService.Processor<IServiceHandler> processor;
     private static TServerSocket transport;
-    private static TServer server;
+    // private static TServer server;
+    private static  TThreadPoolServer mul_sever;
+
 
     private Manager manager;
 
@@ -41,9 +44,10 @@ public class ThssDB {
     private static void setUp(IService.Processor<IServiceHandler> processor) {
         try {
             transport = new TServerSocket(Global.DEFAULT_SERVER_PORT);
-            server = new TSimpleServer(new TServer.Args(transport).processor(processor));
+            // server = new TSimpleServer(new TServer.Args(transport).processor(processor));
+            mul_sever = new TThreadPoolServer(new TThreadPoolServer.Args(transport).processor(processor));
             logger.info("Starting ThssDB ...");
-            server.serve();
+            mul_sever.serve();
         } catch (TTransportException e) {
             logger.error(e.getMessage());
         }
