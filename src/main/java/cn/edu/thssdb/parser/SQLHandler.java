@@ -45,7 +45,9 @@ public class SQLHandler {
                     ArrayList<String> x_lock_tables = new ArrayList<>();
                     manager.x_lockDict.put(session, x_lock_tables);
                     // 禁止恶意begin，非必要不记begin
-                    manager.writeLog(statement, session);
+                    if (session >= 0) {
+                        manager.writeLog(statement, session);
+                    }
                 } else {
                     queryResults.add(new QueryResult("session already in a transaction."));
                     System.out.println("session already in a transaction.");
@@ -91,7 +93,9 @@ public class SQLHandler {
                         manager.persistDatabase(databaseName);
                     }
                     // 禁止恶意commit，非必要不记commit
-                    manager.writeLog(statement, session);
+                    if (session >= 0) {
+                        manager.writeLog(statement, session);
+                    }
                 } else {
                     queryResults.add(new QueryResult("session not in a transaction."));
                     System.out.println("session not in a transaction.");
