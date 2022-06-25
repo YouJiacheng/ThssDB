@@ -39,12 +39,12 @@ public class SQLHandler {
         System.out.println("session:" +session + "  " + statement);
         if (statement.equals(Global.LOG_BEGIN_TRANSACTION)) {
             ArrayList<QueryResult> queryResults = new ArrayList<QueryResult>();
-            try{
+            try {
                 if (!manager.currentSessions.contains(session)){
                     manager.currentSessions.add(session);
                     ArrayList<String> x_lock_tables = new ArrayList<>();
                     manager.x_lockDict.put(session, x_lock_tables);
-                } else{
+                } else {
                     System.out.println("session already in a transaction.");
                 }
             } catch (Exception e){
@@ -57,10 +57,10 @@ public class SQLHandler {
 
         if (statement.equals(Global.LOG_COMMIT)) {
             ArrayList<QueryResult> queryResults = new ArrayList<QueryResult>();
-            try{
+            try {
                 if (manager.currentSessions.contains(session)){
                     Database currentDB = manager.getCurrentDatabase();
-                    if(currentDB == null) {
+                    if (currentDB == null) {
                         throw new DatabaseNotExistException();
                     }
                     String databaseName = currentDB.getDatabaseName();
@@ -75,7 +75,7 @@ public class SQLHandler {
 
                     String databaseLogFilename = Database.getDatabaseLogFilePath(databaseName);
                     File file = new File(databaseLogFilename);
-                    if(file.exists() && file.isFile() && file.length() > 50000)
+                    if (file.exists() && file.isFile() && file.length() > 50000)
                     {
                         System.out.println("Clear database log");
                         try
@@ -92,7 +92,7 @@ public class SQLHandler {
                 } else {
                     System.out.println("session not in a transaction.");
                 }
-            }catch (Exception e){
+            } catch (Exception e){
                 queryResults.add(new QueryResult(e.getMessage()));
                 return queryResults;
             }

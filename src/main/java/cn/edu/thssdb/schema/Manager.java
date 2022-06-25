@@ -10,6 +10,7 @@ import java.io.*;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.logging.Logger;
 
 // TODO: add lock control
 // TODO: complete readLog() function according to writeLog() for recovering transaction
@@ -158,7 +159,25 @@ public class Manager {
   }
 
   // TODO: read Log in transaction to recover.
-  public void readLog(String databaseName) { }
+  public void readLog(String databaseName) {
+    String logFilename = this.getDatabaseLogFilePath(databaseName);
+    try {
+//      FileReader reader = new FileReader(logFilename);
+      File logFile = new File(logFilename);
+      System.out.println("??!! try to recover database " + databaseName);
+      InputStreamReader reader = new InputStreamReader(new FileInputStream(logFile));
+      BufferedReader bufferedReader = new BufferedReader(reader);
+      String statement;
+      while ((statement = bufferedReader.readLine()) != null) {
+        System.out.println("??!!" + statement);
+        sqlHandler.evaluate(statement, -1);
+      }
+      bufferedReader.close();
+      reader.close();
+    } catch (Exception e) {
+      throw new FileIOException(logFilename);
+    }
+  }
 
   public void recover() {
     File managerDataFile = new File(Manager.getManagerDataFilePath());
@@ -183,5 +202,9 @@ public class Manager {
   // Get positions
   public static String getManagerDataFilePath(){
     return Global.DBMS_DIR + File.separator + "data" + File.separator + "manager";
+  }
+  // get database log file path, same as Database.getDatabaseLogFilePath(String)
+  public static String getDatabaseLogFilePath(String databaseName) {
+    return Global.DBMS_DIR + File.separator + "data" + File.separator + databaseName + File.separator + "log";
   }
 }
