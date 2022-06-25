@@ -8,6 +8,7 @@ import cn.edu.thssdb.common.Global;
 
 import java.io.*;
 import java.util.ArrayList;
+//import java.util.Arrays;
 import java.util.HashMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.logging.Logger;
@@ -23,6 +24,10 @@ public class Manager {
   public ArrayList<Long> waitSessions;
   public static SQLHandler sqlHandler;
   public HashMap<Long, ArrayList<String>> x_lockDict;
+//  private final static String INSERT = "insert";
+//  private final static String DELETE = "delete";
+//  private final static String UPDATE = "update";
+//  private static String[] CMD_SET_WITHOUT_SBC = {INSERT, DELETE, UPDATE};
 
   public static Manager getInstance() {
     return Manager.ManagerHolder.INSTANCE;
@@ -147,11 +152,11 @@ public class Manager {
 
 
   // Log control and recover from logs.
-  public void writeLog(String statement) {
+  public void writeLog(String statement, long logsession) {
     String logFilename = this.currentDatabase.getDatabaseLogFilePath();
     try {
       FileWriter writer = new FileWriter(logFilename, true);
-      writer.write(statement + "\n");
+      writer.write(logsession + "\n" + statement + "\n");
       writer.close();
     } catch (Exception e) {
       throw new FileIOException(logFilename);
@@ -167,10 +172,19 @@ public class Manager {
       System.out.println("??!! try to recover database " + databaseName);
       InputStreamReader reader = new InputStreamReader(new FileInputStream(logFile));
       BufferedReader bufferedReader = new BufferedReader(reader);
+
+      String logsession;
       String statement;
-      while ((statement = bufferedReader.readLine()) != null) {
-        System.out.println("??!!" + statement);
-        sqlHandler.evaluate(statement, -1);
+      while ((logsession = bufferedReader.readLine()) != null) {
+//        String stmt_head = statement.split("\\s+")[0];
+//        if (Arrays.asList(CMD_SET_WITHOUT_SBC).contains(stmt_head.toLowerCase())) {
+          // evaluate
+        if ((statement = bufferedReader.readLine()) != null) {
+          System.out.println("??!! session: " + logsession + " statement: " + statement);
+          long session = Long.parseLong(logsession);
+          sqlHandler.evaluate(statement, -session-2);
+        }
+//        }
       }
       bufferedReader.close();
       reader.close();

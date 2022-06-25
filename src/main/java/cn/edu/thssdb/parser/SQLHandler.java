@@ -32,22 +32,22 @@ public class SQLHandler {
 
     public ArrayList<QueryResult> evaluate(String statement, long session) {
         String stmt_head = statement.split("\\s+")[0];
-        if (Arrays.asList(CMD_SET_WITHOUT_SELECT).contains(stmt_head.toLowerCase()) && session==0)
+        if (Arrays.asList(CMD_SET_WITHOUT_SELECT).contains(stmt_head.toLowerCase()) && session>=0)
         {
-            manager.writeLog(statement);
+            manager.writeLog(statement, session);
         }
         System.out.println("session:" +session + "  " + statement);
         if (statement.equals(Global.LOG_BEGIN_TRANSACTION)) {
             ArrayList<QueryResult> queryResults = new ArrayList<QueryResult>();
             try {
-                if (!manager.currentSessions.contains(session)){
+                if (!manager.currentSessions.contains(session)) {
                     manager.currentSessions.add(session);
                     ArrayList<String> x_lock_tables = new ArrayList<>();
                     manager.x_lockDict.put(session, x_lock_tables);
                 } else {
                     System.out.println("session already in a transaction.");
                 }
-            } catch (Exception e){
+            } catch (Exception e) {
                 queryResults.add(new QueryResult(e.getMessage()));
                 return queryResults;
             }
@@ -58,7 +58,7 @@ public class SQLHandler {
         if (statement.equals(Global.LOG_COMMIT)) {
             ArrayList<QueryResult> queryResults = new ArrayList<QueryResult>();
             try {
-                if (manager.currentSessions.contains(session)){
+                if (manager.currentSessions.contains(session)) {
                     Database currentDB = manager.getCurrentDatabase();
                     if (currentDB == null) {
                         throw new DatabaseNotExistException();
