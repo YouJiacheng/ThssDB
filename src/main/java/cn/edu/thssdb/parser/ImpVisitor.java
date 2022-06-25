@@ -181,8 +181,9 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
             var table = GetCurrentDB().get(ctx.table_name().getText());
             var s = new StringBuilder();
             s.append(table.tableName);
-            s.append("(\n");
+            s.append(" (\n");
             for (var c : table.columns) {
+                s.append("  ");
                 s.append(c.representation());
                 s.append("\n");
             }

@@ -27,6 +27,8 @@ public class Manager {
 //  private final static String INSERT = "insert";
 //  private final static String DELETE = "delete";
 //  private final static String UPDATE = "update";
+  private final static String BEGIN = "begin";
+  private final static String COMMIT = "commit";
 //  private static String[] CMD_SET_WITHOUT_SBC = {INSERT, DELETE, UPDATE};
 
   public static Manager getInstance() {
@@ -163,6 +165,18 @@ public class Manager {
     }
   }
 
+  class logItem {
+    public long session;
+    public String statement;
+    public boolean commited;
+
+    logItem(long s, String st) {
+      this.session = s;
+      this.statement = st;
+      this.commited = false;
+    }
+  }
+
   // TODO: read Log in transaction to recover.
   public void readLog(String databaseName) {
     String logFilename = this.getDatabaseLogFilePath(databaseName);
@@ -175,19 +189,50 @@ public class Manager {
 
       String logsession;
       String statement;
+      ArrayList<logItem> logItems = new ArrayList<>();
       while ((logsession = bufferedReader.readLine()) != null) {
-//        String stmt_head = statement.split("\\s+")[0];
-//        if (Arrays.asList(CMD_SET_WITHOUT_SBC).contains(stmt_head.toLowerCase())) {
-          // evaluate
+        // retrieve
         if ((statement = bufferedReader.readLine()) != null) {
-          System.out.println("??!! session: " + logsession + " statement: " + statement);
           long session = Long.parseLong(logsession);
-          sqlHandler.evaluate(statement, -session-2);
+          logItems.add(new logItem(session, statement));
+          // System.out.println("??!! session: " + session + " statement: " + statement);
+          // sqlHandler.evaluate(statement, -session-2);
         }
-//        }
       }
       bufferedReader.close();
       reader.close();
+
+      // process, get committed state of every log
+      int n = logItems.size();
+      for (int i = n - 1; i >= 0; i--) {
+        // String stmt_head = logItems.get(i).statement.split("\\s+")[0];
+        String st = logItems.get(i).statement;
+        long session = logItems.get(i).session;
+        if (st.equals(Global.LOG_COMMIT)) {
+          for (int j = i; j >= 0; j--) {
+            String stj = logItems.get(j).statement;
+            long sessionj = logItems.get(j).session;
+            if (sessionj == session) {
+              if (stj.equals(Global.LOG_BEGIN_TRANSACTION)) {
+                logItems.get(j).commited = true;
+                break;
+              } else {
+                logItems.get(j).commited = true;
+              }
+            }
+          }
+        }
+      }
+      // recover the committed logs
+      for (logItem i : logItems) {
+        if (i.commited) {
+          System.out.println("??!! session: " + i.session + " statement: " + i.statement);
+          sqlHandler.evaluate(i.statement, -i.session-2);
+        } else {
+          System.out.println("??!! UNCOMMITTED ITEM session: " + i.session + " statement: " + i.statement);
+        }
+      }
+
     } catch (Exception e) {
       throw new FileIOException(logFilename);
     }

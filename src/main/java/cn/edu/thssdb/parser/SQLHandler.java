@@ -27,7 +27,7 @@ public class SQLHandler {
     private final static String BEGIN = "begin";
     private final static String COMMIT = "commit";
     private final static String SELECT = "select";
-    private static final String[] CMD_SET_WITHOUT_SELECT = {INSERT, DELETE, UPDATE, BEGIN, COMMIT};
+    private static final String[] CMD_SET_WITHOUT_SCB = {INSERT, DELETE, UPDATE};
 
     public SQLHandler(Manager manager) {
         this.manager = manager;
@@ -35,9 +35,7 @@ public class SQLHandler {
 
     public List<QueryResult> evaluate(String statement, long session) {
         String stmt_head = statement.split("\\s+")[0];
-        if (Arrays.asList(CMD_SET_WITHOUT_SELECT).contains(stmt_head.toLowerCase()) && session >= 0) {
-            manager.writeLog(statement, session);
-        }
+
         System.out.println("session:" + session + "  " + statement);
         if (statement.equals(Global.LOG_BEGIN_TRANSACTION)) {
             ArrayList<QueryResult> queryResults = new ArrayList<>();
@@ -46,7 +44,10 @@ public class SQLHandler {
                     manager.currentSessions.add(session);
                     ArrayList<String> x_lock_tables = new ArrayList<>();
                     manager.x_lockDict.put(session, x_lock_tables);
+                    // 禁止恶意begin，非必要不记begin
+                    manager.writeLog(statement, session);
                 } else {
+                    queryResults.add(new QueryResult("session already in a transaction."));
                     System.out.println("session already in a transaction.");
                 }
             } catch (Exception e) {
@@ -89,7 +90,10 @@ public class SQLHandler {
                         }
                         manager.persistDatabase(databaseName);
                     }
+                    // 禁止恶意commit，非必要不记commit
+                    manager.writeLog(statement, session);
                 } else {
+                    queryResults.add(new QueryResult("session not in a transaction."));
                     System.out.println("session not in a transaction.");
                 }
             } catch (Exception e) {
@@ -106,6 +110,12 @@ public class SQLHandler {
             String message = "Exception: illegal SQL statement! Error message: " + e.getMessage();
             return List.of(new QueryResult(message));
         }
+
+        // log after parse
+        if (Arrays.asList(CMD_SET_WITHOUT_SCB).contains(stmt_head.toLowerCase()) && session >= 0) {
+            manager.writeLog(statement, session);
+        }
+
         ImpVisitor visitor = new ImpVisitor(manager);
         var results = new ArrayList<QueryResult>();
         var lockXManager = LockVisitor.visitManagerExclusiveLock(stmt);
@@ -114,6 +124,7 @@ public class SQLHandler {
         var lockSTables = LockVisitor.visitTableSharedLock(stmt);
         var lockXTables = LockVisitor.visitTableExclusiveLock(stmt);
         results.add(visitor.visitSql_stmt(stmt));
+
         return results;
     }
 
