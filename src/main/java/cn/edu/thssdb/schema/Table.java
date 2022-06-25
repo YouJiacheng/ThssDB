@@ -36,14 +36,16 @@ public class Table implements Iterable<Row> {
     }
 
     public Boolean testXLock(Long sessionId) {
+        // lock.writeLock().tryLock();
         return false;
     }
 
     public Boolean takeXLock(Long sessionId) {
-        return false;
+        return lock.writeLock().tryLock();
     } // 在test成功前提下拿X锁。返回值false表示session之前已拥有这个表的X锁。
 
     public void releaseXLock(Long sessionId) {
+        //lock.writeLock().unlock();
     }
 
 
@@ -72,12 +74,12 @@ public class Table implements Iterable<Row> {
     private void recover() {
         // read from disk for recovering
         try {
-            // TODO lock control
+            lock.writeLock().lock();
             ArrayList<Row> rowsOnDisk = deserialize();
             for (Row row : rowsOnDisk)
                 this.index.put(row.getEntries().get(this.primaryIndex), row);
         } finally {
-            // TODO lock control
+            lock.writeLock().unlock();
         }
     }
 
@@ -87,22 +89,22 @@ public class Table implements Iterable<Row> {
 
     public Row get(Cell primaryCell) {
         try {
-            // TODO lock control
+            lock.readLock().lock();
             return this.index.get(primaryCell);
         } finally {
-            // TODO lock control
+            lock.readLock().unlock();
         }
     }
 
     public void insert(List<Row> rows) {
         try {
-            // TODO lock control
+            lock.writeLock().lock();
             checkPutValid(rows, new TreeSet<>());
             // check all, then modify for atomic
             for (var row : rows)
                 index.put(row.getEntries().get(primaryIndex), row);
         } finally {
-            // TODO lock control
+            lock.writeLock().unlock();
         }
     }
 
@@ -128,19 +130,19 @@ public class Table implements Iterable<Row> {
 
     public void delete(List<Cell> keys) {
         try {
-            // TODO lock control
+            lock.writeLock().lock();
             checkRemoveValid(keys);
             // check all, then modify for atomic
             for (var key : keys)
                 index.remove(key);
         } finally {
-            // TODO lock control.
+            lock.writeLock().unlock();
         }
     }
 
     public void update(List<Cell> oldKeys, List<Row> newRows) {
         try {
-            // TODO lock control.
+            lock.writeLock().lock();
             checkPutValid(newRows, checkRemoveValid(oldKeys));
             // check all, then modify for atomic
             for (var key : oldKeys)
@@ -148,7 +150,7 @@ public class Table implements Iterable<Row> {
             for (var row : newRows)
                 index.put(row.getEntries().get(primaryIndex), row);
         } finally {
-            // TODO lock control.
+            lock.writeLock().unlock();
         }
     }
 
@@ -198,16 +200,16 @@ public class Table implements Iterable<Row> {
 
     public void persist() {
         try {
-            // TODO add lock control.
+            lock.readLock().lock();
             serialize();
         } finally {
-            // TODO add lock control.
+            lock.readLock().unlock();
         }
     }
 
     public void dropTable() { // remove table data file
         try {
-            // TODO lock control.
+            lock.writeLock().lock();
             File tableFolder = new File(this.getTableFolderPath());
             if (!tableFolder.exists() ? !tableFolder.mkdirs() : !tableFolder.isDirectory())
                 throw new FileIOException(this.getTableFolderPath() + " when dropTable");
@@ -215,7 +217,7 @@ public class Table implements Iterable<Row> {
             if (tableFile.exists() && !tableFile.delete())
                 throw new FileIOException(this.getTablePath() + " when dropTable");
         } finally {
-            // TODO lock control.
+            lock.writeLock().unlock();
         }
     }
 
