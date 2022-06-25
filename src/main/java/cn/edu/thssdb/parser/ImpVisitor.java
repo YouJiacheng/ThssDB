@@ -5,6 +5,7 @@ package cn.edu.thssdb.parser;
 
 import cn.edu.thssdb.common.Global;
 import cn.edu.thssdb.exception.DatabaseNotExistException;
+import cn.edu.thssdb.query.ProductIterator;
 import cn.edu.thssdb.query.QueryResult;
 import cn.edu.thssdb.schema.*;
 import cn.edu.thssdb.type.ColumnType;
@@ -306,7 +307,8 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
             var columns = tableToColumns.get(tableName);
             var columnName = columnFullName.column_name().getText();
             var idx = columns.stream().map(Column::getColumnName).toList().indexOf(columnName);
-            if (idx == -1) throw new Exception("column " + columnName + " doesn't exist in table definition");
+            if (idx == -1)
+                throw new Exception("column " + columnName + " doesn't exist in table " + tableName + " definition");
             return tableToRow.get(tableName).getEntries().get(idx);
         }
         var v = ctx.literal_value();
@@ -361,7 +363,8 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
             var columns = table.columns;
             var setColumnName = ctx.column_name().getText();
             var setIdx = columns.stream().map(Column::getColumnName).toList().indexOf(setColumnName);
-            if (setIdx < 0) throw new Exception("column " + setColumnName + " doesn't exist in table definition");
+            if (setIdx < 0)
+                throw new Exception("column " + setColumnName + " doesn't exist in table " + name + " definition");
             var primaryIdx = table.primaryIndex;
             var filteredTable = filterSingleTable(ctx.multiple_condition(), table);
             for (var row : filteredTable) {
@@ -377,7 +380,7 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
         }
     }
 
-    private QueryResult joinFilterProjectTables(SQLParser.Table_queryContext ctx, SQLParser.Multiple_conditionContext whereCtx) throws Exception {
+    private QueryResult joinFilterProjectTables(SQLParser.Table_queryContext ctx, SQLParser.Multiple_conditionContext whereCtx, List<SQLParser.Result_columnContext> projectionCtxList) throws Exception {
         var tables = new ArrayList<Table>();
         for (var name : ctx.table_name())
             tables.add(GetCurrentDB().get(name.getText()));
@@ -389,7 +392,7 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
             tablesColumnsName.add(t.columns.stream().map(Column::getColumnName).toList());
             tablesData.add(StreamSupport.stream(t.index.spliterator(), false).map(p -> p.right).toList());
         }
-        var num_tables = tablesData.size();
+        var numTables = tablesData.size();
         Function<List<Row>, Boolean> naturalJoinPredicate = null;
         Function<List<Row>, Row> naturalJoinProjector = null;
         List<String> naturalJoinColumnsName = null;
@@ -404,7 +407,7 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
             naturalJoinPredicate = rows -> {
                 for (var idx : columnIdx) {
                     var cell = rows.get(0).getEntries().get(idx.get(0));
-                    for (int i = 1; i < num_tables; ++i) {
+                    for (int i = 1; i < numTables; ++i) {
                         var other = rows.get(i).getEntries().get(idx.get(i));
                         if (cell.value == null || other.value == null) return false;
                         if (cell.value.getClass() != other.value.getClass()) return false;
@@ -417,7 +420,7 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
                 var entries = new ArrayList<Cell>();
                 for (var idx : columnIdx)
                     entries.add(rows.get(0).getEntries().get(idx.get(0)));
-                for (int i = 0; i < num_tables; ++i) {
+                for (int i = 0; i < numTables; ++i) {
                     var tableColumnsName = tablesColumnsName.get(i);
                     var tableEntries = rows.get(i).getEntries();
                     for (int j = 0; j < tableColumnsName.size(); ++j)
@@ -435,84 +438,17 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
 
 
         Function<List<Row>, Boolean> finalNaturalJoinPredicate = naturalJoinPredicate;
-        var joinedTableIterator = new Object() {
-            private final List<Iterator<Row>> tableIterators = tablesData.stream().map(List::iterator).collect(Collectors.toList());
-            private List<Row> current = null;
-
-            private boolean currentUsed = true;
-
-            public boolean hasNext() throws Exception {
-                fetchNext();
-                return !currentUsed;
-            }
-
-            public List<Row> next() throws Exception {
-                fetchNext();
-                if (currentUsed) throw new NoSuchElementException();
-                currentUsed = true;
-                return current;
-            }
-
-            private boolean canInit() {
-                for (var iter : tableIterators) // need all has next
-                    if (!iter.hasNext()) return false;
-                return true;
-            }
-
-            private void init() {
-                if (!canInit()) throw new NoSuchElementException();
-                current = new ArrayList<>();
-                for (var iter : tableIterators)
-                    current.add(iter.next());
-            }
-
-
-            private boolean unfilteredHasNext() {
-                if (current == null) // need all has next
-                    return canInit();
-                for (var iter : tableIterators) // only need one has next
-                    if (iter.hasNext()) return true;
-                return false;
-            }
-
-            private List<Row> unfilteredNext() {
-                if (current == null) {
-                    init(); // may throw NoSuchElementException
-                    return current;
-                }
-                var innermost = tableIterators.get(0);
-                if (innermost.hasNext()) {
-                    current.set(0, innermost.next());
-                    return current;
-                }
-                // exhausted
-                for (int i = 1; i < num_tables; ++i) { // 尝试进位
-                    var iter = tableIterators.get(i);
-                    if (iter.hasNext()) { // 可以进位
-                        for (int j = 0; j < i; ++j) { // 清零
-                            tableIterators.set(j, tablesData.get(j).iterator());
-                            current.set(j, tableIterators.get(j).next());
-                        }
-                        current.set(i, iter.next());
-                        return current;
-                    }
-                }
-                // 溢出
-                throw new NoSuchElementException();
-            }
-
-            private void fetchNext() throws Exception {
+        var joinedTableIterator = new ProductIterator(tablesData) {
+            protected void fetchNext() throws Exception {
                 if (!currentUsed) return;
                 while (unfilteredHasNext()) {
                     var rows = unfilteredNext();
                     var tableToRow = new HashMap<String, Row>();
-                    for (int i = 0; i < num_tables; ++i)
+                    for (int i = 0; i < numTables; ++i)
                         tableToRow.put(tables.get(i).tableName, rows.get(i));
                     if (onConditions != null) {
                         if (!evaluateMultipleCondition(onConditions, tableToRow, tableToColumns, null)) continue;
-                    } else {
-                        if (!finalNaturalJoinPredicate.apply(rows)) continue;
-                    }
+                    } else if (!finalNaturalJoinPredicate.apply(rows)) continue;
                     if (whereCtx != null && !evaluateMultipleCondition(whereCtx, tableToRow, tableToColumns, null))
                         continue;
                     current = rows;
@@ -530,6 +466,7 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
             return new QueryResult(data, naturalJoinColumnsName);
         }
 
+
         return null;
     }
 
@@ -545,14 +482,13 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
             var tableQuery = tableQueries.get(0);
             var tables = tableQuery.table_name();
             if (tables.size() > 1) {
-                return joinFilterProjectTables(tableQuery, ctx.multiple_condition());
+                return joinFilterProjectTables(tableQuery, ctx.multiple_condition(), ctx.result_column());
             } else {
                 var table = GetCurrentDB().get(tableQuery.table_name(0).getText());
                 return new QueryResult(filterSingleTable(ctx.multiple_condition(), table), table.columns.stream().map(Column::getColumnName).toList());
             }
 
         } catch (Exception e) {
-            e.printStackTrace();
             return new QueryResult(e.getMessage());
         }
     }
