@@ -33,13 +33,11 @@ import java.util.stream.StreamSupport;
  */
 
 public class ImpVisitor extends SQLBaseVisitor<Object> {
-    private Manager manager;
-    private long session;
+    private final Manager manager;
 
-    public ImpVisitor(Manager manager, long session) {
+    public ImpVisitor(Manager manager) {
         super();
         this.manager = manager;
-        this.session = session;
     }
 
     private Database GetCurrentDB() {
@@ -50,6 +48,7 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
         return currentDB;
     }
 
+    @Override
     public QueryResult visitSql_stmt(SQLParser.Sql_stmtContext ctx) {
         if (ctx.create_db_stmt() != null) return new QueryResult(visitCreate_db_stmt(ctx.create_db_stmt()));
         if (ctx.drop_db_stmt() != null) return new QueryResult(visitDrop_db_stmt(ctx.drop_db_stmt()));
@@ -65,11 +64,13 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
         return null;
     }
 
-    public Object visitParse(SQLParser.ParseContext ctx) {
+    @Override
+    public ArrayList<QueryResult> visitParse(SQLParser.ParseContext ctx) {
         return visitSql_stmt_list(ctx.sql_stmt_list());
     }
 
-    public Object visitSql_stmt_list(SQLParser.Sql_stmt_listContext ctx) {
+    @Override
+    public ArrayList<QueryResult> visitSql_stmt_list(SQLParser.Sql_stmt_listContext ctx) {
         ArrayList<QueryResult> ret = new ArrayList<>();
         for (SQLParser.Sql_stmtContext subCtx : ctx.sql_stmt()) ret.add(visitSql_stmt(subCtx));
         return ret;
@@ -186,6 +187,7 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
     /**
      * 显示表格
      */
+    @Override
     public String visitShow_meta_stmt(SQLParser.Show_meta_stmtContext ctx) {
         try {
             var table = GetCurrentDB().get(ctx.table_name().getText());

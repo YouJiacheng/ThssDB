@@ -12,8 +12,11 @@ import org.antlr.v4.runtime.CommonTokenStream;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 
 public class SQLHandler {
@@ -30,13 +33,12 @@ public class SQLHandler {
         this.manager = manager;
     }
 
-    public ArrayList<QueryResult> evaluate(String statement, long session) {
+    public List<QueryResult> evaluate(String statement, long session) {
         String stmt_head = statement.split("\\s+")[0];
-        if (Arrays.asList(CMD_SET_WITHOUT_SELECT).contains(stmt_head.toLowerCase()) && session>=0)
-        {
+        if (Arrays.asList(CMD_SET_WITHOUT_SELECT).contains(stmt_head.toLowerCase()) && session >= 0) {
             manager.writeLog(statement, session);
         }
-        System.out.println("session:" +session + "  " + statement);
+        System.out.println("session:" + session + "  " + statement);
         if (statement.equals(Global.LOG_BEGIN_TRANSACTION)) {
             ArrayList<QueryResult> queryResults = new ArrayList<QueryResult>();
             try {
@@ -71,20 +73,18 @@ public class SQLHandler {
                         currentTable.releaseXLock(session);
                     }
                     table_list.clear();
-                    manager.x_lockDict.put(session,table_list);
+                    manager.x_lockDict.put(session, table_list);
 
                     String databaseLogFilename = Database.getDatabaseLogFilePath(databaseName);
                     File file = new File(databaseLogFilename);
-                    if (file.exists() && file.isFile() && file.length() > 50000)
-                    {
+                    BasicFileAttributes basicFileAttributes = Files.readAttributes(file.toPath(), BasicFileAttributes.class);
+                    if (file.exists() && basicFileAttributes.isRegularFile() && basicFileAttributes.size() > 50000) {
                         System.out.println("Clear database log");
-                        try
-                        {
+                        try {
                             FileWriter writer = new FileWriter(databaseLogFilename);
-                            writer.write( "");
+                            writer.write("");
                             writer.close();
-                        } catch (IOException e)
-                        {
+                        } catch (IOException e) {
                             e.printStackTrace();
                         }
                         manager.persistDatabase(databaseName);
@@ -92,13 +92,25 @@ public class SQLHandler {
                 } else {
                     System.out.println("session not in a transaction.");
                 }
-            } catch (Exception e){
+            } catch (Exception e) {
                 queryResults.add(new QueryResult(e.getMessage()));
                 return queryResults;
             }
             queryResults.add(new QueryResult("commit transaction."));
             return queryResults;
         }
+        try {
+            var ctx = parseStatement(statement);
+            var lockSTables = TableVisitor.visitLockS(ctx);
+            var lockXTables = TableVisitor.visitLockX(ctx);
+            return evaluateNoLock(ctx);
+        } catch (Exception e) {
+            String message = "Exception: illegal SQL statement! Error message: " + e.getMessage();
+            return List.of(new QueryResult(message));
+        }
+    }
+
+    public SQLParser.ParseContext parseStatement(String statement) {
         SQLLexer lexer = new SQLLexer(CharStreams.fromString(statement));
         lexer.removeErrorListeners();
         lexer.addErrorListener(SQLErrorListener.instance);
@@ -107,17 +119,12 @@ public class SQLHandler {
         SQLParser parser = new SQLParser(tokenStream);
         parser.removeErrorListeners();
         parser.addErrorListener(SQLErrorListener.instance);
+        return parser.parse();
+    }
 
-        try {
-            ImpVisitor visitor = new ImpVisitor(manager, session);
-            return (ArrayList<QueryResult>) visitor.visitParse(parser.parse());
-        } catch (Exception e) {
-            String message = "Exception: illegal SQL statement! Error message: " + e.getMessage();
-            QueryResult result = new QueryResult(message);
-            ArrayList<QueryResult> results = new ArrayList<>();
-            results.add(result);
-            return results;
-        }
+    public List<QueryResult> evaluateNoLock(SQLParser.ParseContext ctx) {
+        ImpVisitor visitor = new ImpVisitor(manager);
+        return visitor.visitParse(ctx);
     }
 
 }
