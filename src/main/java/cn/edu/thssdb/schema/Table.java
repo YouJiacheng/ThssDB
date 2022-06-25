@@ -6,9 +6,7 @@ import cn.edu.thssdb.common.Global;
 import cn.edu.thssdb.common.Pair;
 
 import java.io.*;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Iterator;
+import java.util.*;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import static cn.edu.thssdb.type.ColumnType.STRING;
@@ -96,34 +94,59 @@ public class Table implements Iterable<Row> {
         }
     }
 
-    public void insert(Row row) {
+    public void insert(List<Row> rows) {
         try {
             // TODO lock control
-            this.checkRowValidInTable(row);
-            if (containsRow(row)) throw new DuplicateKeyException();
-            index.put(row.getEntries().get(this.primaryIndex), row);
+            checkPutValid(rows, new TreeSet<>());
+            // check all, then modify for atomic
+            for (var row : rows)
+                index.put(row.getEntries().get(primaryIndex), row);
         } finally {
             // TODO lock control
         }
     }
 
-    public void delete(Row row) {
-        try {
-            // TODO lock control.
-            this.checkRowValidInTable(row);
-            if (!this.containsRow(row)) throw new KeyNotExistException();
-            index.remove(row.getEntries().get(this.primaryIndex));
-        } finally {
-            // TODO lock control.
+    private void checkPutValid(List<Row> rows, TreeSet<Cell> removed) {
+        var keySet = new TreeSet<Cell>();
+        for (var row : rows) {
+            checkRowValidInTable(row);
+            var key = row.getEntries().get(primaryIndex);
+            // for update, removed key can be re-put
+            if (index.contains(key) && !removed.contains(key)) throw new DuplicateKeyException();
+            if (keySet.contains(key)) throw new DuplicateKeyException();
+            keySet.add(key);
         }
     }
 
-    public void update(Cell key, Row newRow) {
-        try {
-            // TODO lock control.
-            this.checkRowValidInTable(newRow);
+    private TreeSet<Cell> checkRemoveValid(List<Cell> keys) {
+        var keySet = new TreeSet<>(keys); // remove multiple times will cause KeyNotExistException
+        if (keySet.size() < keys.size()) throw new KeyNotExistException();
+        for (var key : keys)
             if (!index.contains(key)) throw new KeyNotExistException();
-            index.update(key, newRow);
+        return keySet;
+    }
+
+    public void delete(List<Cell> keys) {
+        try {
+            // TODO lock control
+            checkRemoveValid(keys);
+            // check all, then modify for atomic
+            for (var key : keys)
+                index.remove(key);
+        } finally {
+            // TODO lock control.
+        }
+    }
+
+    public void update(List<Cell> oldKeys, List<Row> newRows) {
+        try {
+            // TODO lock control.
+            checkPutValid(newRows, checkRemoveValid(oldKeys));
+            // check all, then modify for atomic
+            for (var key : oldKeys)
+                index.remove(key);
+            for (var row : newRows)
+                index.put(row.getEntries().get(primaryIndex), row);
         } finally {
             // TODO lock control.
         }
@@ -243,7 +266,7 @@ public class Table implements Iterable<Row> {
         }
     }
 
-    private Boolean containsRow(Row row) {
+    private Boolean containsRowByKey(Row row) {
         return index.contains(row.getEntries().get(primaryIndex));
     }
 

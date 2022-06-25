@@ -229,6 +229,7 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
             var columns = columns_idx.stream().map(table_columns::get).toList();
             var num_table_columns = table_columns.size();
             var num_columns = columns_name.size();
+            var data = new ArrayList<Row>();
             for (var e : ctx.value_entry()) {
                 var entry_map = new TreeMap<Integer, Cell>();
                 var literal_values = e.literal_value();
@@ -256,8 +257,9 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
                         entry_completed.add(Column.parseEntry(Global.ENTRY_NULL, c));
                     }
                 }
-                table.insert(new Row(entry_completed));
+                data.add(new Row(entry_completed));
             }
+            table.insert(data);
             return "INSERT succeed";
         } catch (Exception e) {
             return e.getMessage();
@@ -351,8 +353,7 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
         try {
             var table = GetCurrentDB().get(ctx.table_name().getText());
             var filteredTable = filterSingleTable(ctx.multiple_condition(), table);
-            for (var row : filteredTable)
-                table.delete(row);
+            table.delete(filteredTable.stream().map(r -> r.getEntries().get(table.primaryIndex)).toList());
             return "DELETE " + filteredTable.size() + " row(s)";
         } catch (Exception e) {
             return e.getMessage();
@@ -367,20 +368,25 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
         try {
             var table = GetCurrentDB().get(ctx.table_name().getText());
             var name = table.tableName;
-            var columnsName = table.columns.stream().map(Column::getColumnName).toList();
+            var columns = table.columns;
+            var columnsName = columns.stream().map(Column::getColumnName).toList();
             var setColumnName = ctx.column_name().getText();
             var setIdx = columnsName.indexOf(setColumnName);
             if (setIdx < 0)
                 throw new Exception("Column " + setColumnName + " doesn't exist in table " + name + " definition");
             var primaryIdx = table.primaryIndex;
             var filteredTable = filterSingleTable(ctx.multiple_condition(), table);
+            var oldKeys = new ArrayList<Cell>();
+            var newRows = new ArrayList<Row>();
             for (var row : filteredTable) {
-                var entries = new ArrayList<>(row.getEntries());
-                var primaryKey = entries.get(primaryIdx);
+                var entries = new ArrayList<>(row.getEntries()); // copy
+                var key = entries.get(primaryIdx);
                 var val = evaluateExpression(ctx.expression(), Map.of(name, row), Map.of(name, columnsName), name);
-                entries.set(setIdx, val);
-                table.update(primaryKey, new Row(entries));
+                entries.set(setIdx, val.fitToColumn(columns.get(setIdx).getColumnType()));
+                oldKeys.add(key);
+                newRows.add(new Row(entries));
             }
+            table.update(oldKeys, newRows);
             return "UPDATE " + filteredTable.size() + " row(s)";
         } catch (Exception e) {
             return e.getMessage();
@@ -445,6 +451,7 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
             for (var ns : tablesColumnsName)
                 for (var n : ns)
                     if (!sharedColumnNameSet.contains(n)) naturalJoinColumnsName.add(n);
+            tableToColumnsName.put(defaultTableName, naturalJoinColumnsName);
         }
 
 
@@ -488,19 +495,16 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
                 continue;
             }
             // * case
-            if (naturalJoinColumnsName == null)
-                throw new Exception("Ambiguous projection *");
+            if (naturalJoinColumnsName == null) throw new Exception("Ambiguous projection *");
             projectedColumnsName.addAll(naturalJoinColumnsName);
         }
         var tableToColumnsNameWithDefault = new HashMap<>(tableToColumnsName);
-        if (naturalJoinColumnsName != null)
-            tableToColumnsNameWithDefault.put(defaultTableName, naturalJoinColumnsName);
+        if (naturalJoinColumnsName != null) tableToColumnsNameWithDefault.put(defaultTableName, naturalJoinColumnsName);
         while (joinedTableIterator.hasNext()) {
             var rows = joinedTableIterator.next();
             var joinedRow = finalNaturalJoinProjector.apply(rows);
             var tableToRow = tableToRowFn.apply(rows);
-            if (joinedRow != null)
-                tableToRow.put(defaultTableName, joinedRow);
+            if (joinedRow != null) tableToRow.put(defaultTableName, joinedRow);
             var projected = new ArrayList<Cell>();
             for (var proj : projections) {
                 if (proj.column_full_name() != null) {

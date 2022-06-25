@@ -1,6 +1,7 @@
 package cn.edu.thssdb.schema;
 
 import cn.edu.thssdb.common.Global;
+import cn.edu.thssdb.type.ColumnType;
 
 import java.io.Serial;
 import java.io.Serializable;
@@ -33,6 +34,13 @@ public class Cell implements Serializable, Comparable<Cell> {
         if (value instanceof Double) return ((Double) value).compareTo((Double) c.value);
         if (value instanceof String) return ((String) value).compareTo((String) c.value);
         throw new ClassCastException("Unknown type value");
+    }
+
+    @Override
+    public boolean equals(Object c) {
+        if (!(c instanceof Cell))
+            return false;
+        return compareTo((Cell) c) == 0;
     }
 
     public String toString() {
@@ -72,5 +80,18 @@ public class Cell implements Serializable, Comparable<Cell> {
         if (isString) return compareTypes.contains(Integer.signum(((String) value).compareTo((String) other.value)));
         // numeric value
         return compareTypes.contains(Integer.signum(Double.compare(((Number) value).doubleValue(), ((Number) other.value).doubleValue())));
+    }
+
+    public Cell fitToColumn(ColumnType type) {
+        if (value == null || type == STRING)
+            return this;
+        var v = (Number) value;
+        return switch (type) {
+            case INT -> new Cell(v.intValue());
+            case LONG -> new Cell(v.longValue());
+            case FLOAT -> new Cell(v.floatValue());
+            case DOUBLE -> new Cell(v.doubleValue());
+            default -> throw new ClassCastException("Unknown type value");
+        };
     }
 }
