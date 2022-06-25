@@ -9,17 +9,16 @@ import java.util.NoSuchElementException;
 import java.util.stream.Collectors;
 
 public class ProductIterator {
-    private final List<Iterator<Row>> tableIterators;
     private final List<List<Row>> tablesData;
     private final Integer numTables;
+    private final List<Iterator<Row>> tableIterators;
     protected List<Row> current = null;
-
     protected boolean currentUsed = true;
 
     public ProductIterator(List<List<Row>> data) {
         tablesData = data;
-        tableIterators = tablesData.stream().map(List::iterator).collect(Collectors.toList());
         numTables = tablesData.size();
+        tableIterators = tablesData.stream().map(List::iterator).collect(Collectors.toList());
     }
 
     protected void fetchNext() throws Exception {

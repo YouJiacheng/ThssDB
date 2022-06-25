@@ -262,18 +262,19 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
         }
     }
 
-    private boolean evaluateMultipleCondition(SQLParser.Multiple_conditionContext ctx, Map<String, Row> tableToRow, Map<String, List<Column>> tableToColumns, String tableName) throws Exception {
-        if (ctx.condition() != null) return evaluateCondition(ctx.condition(), tableToRow, tableToColumns, tableName);
-        var lhs = evaluateMultipleCondition(ctx.multiple_condition(0), tableToRow, tableToColumns, tableName);
-        var rhs = evaluateMultipleCondition(ctx.multiple_condition(1), tableToRow, tableToColumns, tableName);
+    private boolean evaluateMultipleCondition(SQLParser.Multiple_conditionContext ctx, Map<String, Row> tableToRow, Map<String, List<String>> tableToColumnsName, String tableName) throws Exception {
+        if (ctx.condition() != null)
+            return evaluateCondition(ctx.condition(), tableToRow, tableToColumnsName, tableName);
+        var lhs = evaluateMultipleCondition(ctx.multiple_condition(0), tableToRow, tableToColumnsName, tableName);
+        var rhs = evaluateMultipleCondition(ctx.multiple_condition(1), tableToRow, tableToColumnsName, tableName);
         if (ctx.AND() != null) return lhs && rhs;
         if (ctx.OR() != null) return lhs || rhs;
         throw new Exception();
     }
 
-    private boolean evaluateCondition(SQLParser.ConditionContext ctx, Map<String, Row> tableToRow, Map<String, List<Column>> tableToColumns, String tableName) throws Exception {
-        var lhs = evaluateExpression(ctx.expression(0), tableToRow, tableToColumns, tableName);
-        var rhs = evaluateExpression(ctx.expression(1), tableToRow, tableToColumns, tableName);
+    private boolean evaluateCondition(SQLParser.ConditionContext ctx, Map<String, Row> tableToRow, Map<String, List<String>> tableToColumnsName, String tableName) throws Exception {
+        var lhs = evaluateExpression(ctx.expression(0), tableToRow, tableToColumnsName, tableName);
+        var rhs = evaluateExpression(ctx.expression(1), tableToRow, tableToColumnsName, tableName);
         var cp = ctx.comparator();
         assert cp != null;
         if (cp.EQ() != null) return lhs.SQLCompareTo(rhs, List.of(0));
@@ -285,13 +286,13 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
         throw new Exception();
     }
 
-    private Cell evaluateExpression(SQLParser.ExpressionContext ctx, Map<String, Row> tableToRow, Map<String, List<Column>> tableToColumns, String tableName) throws Exception {
+    private Cell evaluateExpression(SQLParser.ExpressionContext ctx, Map<String, Row> tableToRow, Map<String, List<String>> tableToColumnsName, String tableName) throws Exception {
         if (ctx.comparer() != null) {
-            return evaluateComparer(ctx.comparer(), tableToRow, tableToColumns, tableName);
+            return evaluateComparer(ctx.comparer(), tableToRow, tableToColumnsName, tableName);
         }
         var subExpr = ctx.expression();
-        var arg0 = evaluateExpression(subExpr.get(0), tableToRow, tableToColumns, tableName);
-        var arg1 = subExpr.size() > 1 ? evaluateExpression(subExpr.get(1), tableToRow, tableToColumns, tableName) : null;
+        var arg0 = evaluateExpression(subExpr.get(0), tableToRow, tableToColumnsName, tableName);
+        var arg1 = subExpr.size() > 1 ? evaluateExpression(subExpr.get(1), tableToRow, tableToColumnsName, tableName) : null;
         if (ctx.ADD() != null) return arg0.arithmetic(arg1, Double::sum);
         if (ctx.SUB() != null) return arg0.arithmetic(arg1, (a, b) -> a - b);
         if (ctx.MUL() != null) return arg0.arithmetic(arg1, (a, b) -> a * b);
@@ -299,18 +300,9 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
         return arg0; // (expression) case
     }
 
-    private Cell evaluateComparer(SQLParser.ComparerContext ctx, Map<String, Row> tableToRow, Map<String, List<Column>> tableToColumns, String tableName) throws Exception {
-        var columnFullName = ctx.column_full_name();
-        if (columnFullName != null) {
-            if (columnFullName.table_name() != null) tableName = columnFullName.table_name().getText();
-            if (tableName == null) throw new Exception("Ambitious attribute, need table name");
-            var columns = tableToColumns.get(tableName);
-            var columnName = columnFullName.column_name().getText();
-            var idx = columns.stream().map(Column::getColumnName).toList().indexOf(columnName);
-            if (idx == -1)
-                throw new Exception("column " + columnName + " doesn't exist in table " + tableName + " definition");
-            return tableToRow.get(tableName).getEntries().get(idx);
-        }
+    private Cell evaluateComparer(SQLParser.ComparerContext ctx, Map<String, Row> tableToRow, Map<String, List<String>> tableToColumnsName, String tableName) throws Exception {
+        if (ctx.column_full_name() != null)
+            return evaluateColumn(ctx.column_full_name(), tableToRow, tableToColumnsName, tableName);
         var v = ctx.literal_value();
         assert v != null;
         if (v.NUMERIC_LITERAL() != null) {
@@ -324,13 +316,26 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
         return new Cell(null);
     }
 
+    private Cell evaluateColumn(SQLParser.Column_full_nameContext ctx, Map<String, Row> tableToRow, Map<String, List<String>> tableToColumnsName, String tableName) throws Exception {
+        if (ctx.table_name() != null) tableName = ctx.table_name().getText();
+        if (tableName == null) throw new Exception("Ambitious attribute, need table name");
+        if (!tableToRow.containsKey(tableName) || !tableToColumnsName.containsKey(tableName))
+            throw new Exception("Invalid table name " + tableName);
+        var columnName = ctx.column_name().getText();
+        var idx = tableToColumnsName.get(tableName).indexOf(columnName);
+        if (idx == -1)
+            throw new Exception("Column " + columnName + " doesn't exist in table " + tableName + " definition");
+        return tableToRow.get(tableName).getEntries().get(idx);
+    }
+
     private List<Row> filterSingleTable(SQLParser.Multiple_conditionContext ctx, Table table) throws Exception {
         var index = table.index;
         var name = table.tableName;
+        var tableToColumnsName = Map.of(name, table.columns.stream().map(Column::getColumnName).toList());
         var data = new ArrayList<Row>();
         for (var pair : index) {
             var row = pair.right;
-            if (ctx == null || evaluateMultipleCondition(ctx, Map.of(name, row), Map.of(name, table.columns), name))
+            if (ctx == null || evaluateMultipleCondition(ctx, Map.of(name, row), tableToColumnsName, name))
                 data.add(row);
         }
         return data;
@@ -360,17 +365,17 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
         try {
             var table = GetCurrentDB().get(ctx.table_name().getText());
             var name = table.tableName;
-            var columns = table.columns;
+            var columnsName = table.columns.stream().map(Column::getColumnName).toList();
             var setColumnName = ctx.column_name().getText();
-            var setIdx = columns.stream().map(Column::getColumnName).toList().indexOf(setColumnName);
+            var setIdx = columnsName.indexOf(setColumnName);
             if (setIdx < 0)
-                throw new Exception("column " + setColumnName + " doesn't exist in table " + name + " definition");
+                throw new Exception("Column " + setColumnName + " doesn't exist in table " + name + " definition");
             var primaryIdx = table.primaryIndex;
             var filteredTable = filterSingleTable(ctx.multiple_condition(), table);
             for (var row : filteredTable) {
                 var entries = new ArrayList<>(row.getEntries());
                 var primaryKey = entries.get(primaryIdx);
-                var val = evaluateExpression(ctx.expression(), Map.of(name, row), Map.of(name, columns), name);
+                var val = evaluateExpression(ctx.expression(), Map.of(name, row), Map.of(name, columnsName), name);
                 entries.set(setIdx, val);
                 table.update(primaryKey, new Row(entries));
             }
@@ -380,24 +385,28 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
         }
     }
 
-    private QueryResult joinFilterProjectTables(SQLParser.Table_queryContext ctx, SQLParser.Multiple_conditionContext whereCtx, List<SQLParser.Result_columnContext> projectionCtxList) throws Exception {
+    private QueryResult joinFilterProjectTables(SQLParser.Table_queryContext ctx, SQLParser.Multiple_conditionContext whereCtx, List<SQLParser.Result_columnContext> projections) throws Exception {
         var tables = new ArrayList<Table>();
         for (var name : ctx.table_name())
             tables.add(GetCurrentDB().get(name.getText()));
-        var tableToColumns = new HashMap<String, List<Column>>();
+        var tableToColumnsName = new HashMap<String, List<String>>();
         var tablesColumnsName = new ArrayList<List<String>>();
         var tablesData = new ArrayList<List<Row>>();
+        var tablesName = new ArrayList<String>();
         for (var t : tables) {
-            tableToColumns.put(t.tableName, t.columns);
-            tablesColumnsName.add(t.columns.stream().map(Column::getColumnName).toList());
+            var columnsName = t.columns.stream().map(Column::getColumnName).toList();
+            tableToColumnsName.put(t.tableName, columnsName);
+            tablesColumnsName.add(columnsName);
             tablesData.add(StreamSupport.stream(t.index.spliterator(), false).map(p -> p.right).toList());
+            tablesName.add(t.tableName);
         }
         var numTables = tablesData.size();
+        var defaultTableName = "natural join or " + tablesName.get(0); // identifier can't contain space, won't conflict with real table name
         Function<List<Row>, Boolean> naturalJoinPredicate = null;
-        Function<List<Row>, Row> naturalJoinProjector = null;
+        Function<List<Row>, Row> naturalJoinProjector = rows -> null;
         List<String> naturalJoinColumnsName = null;
         var onConditions = ctx.multiple_condition();
-        if (onConditions == null) { // natural join
+        if (onConditions == null) { // natural join or single table
             Set<String> sharedColumnNameSet = new HashSet<>(tablesColumnsName.get(0));
             for (var ns : tablesColumnsName)
                 sharedColumnNameSet.retainAll(ns);
@@ -438,19 +447,23 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
 
 
         Function<List<Row>, Boolean> finalNaturalJoinPredicate = naturalJoinPredicate;
+        Function<List<Row>, Row> finalNaturalJoinProjector = naturalJoinProjector;
+        Function<List<Row>, Map<String, Row>> tableToRowFn = rows -> IntStream.range(0, numTables).boxed().collect(Collectors.toMap(tablesName::get, rows::get));
         var joinedTableIterator = new ProductIterator(tablesData) {
             protected void fetchNext() throws Exception {
                 if (!currentUsed) return;
                 while (unfilteredHasNext()) {
                     var rows = unfilteredNext();
-                    var tableToRow = new HashMap<String, Row>();
-                    for (int i = 0; i < numTables; ++i)
-                        tableToRow.put(tables.get(i).tableName, rows.get(i));
+                    var tableToRow = tableToRowFn.apply(rows);
                     if (onConditions != null) {
-                        if (!evaluateMultipleCondition(onConditions, tableToRow, tableToColumns, null)) continue;
+                        if (!evaluateMultipleCondition(onConditions, tableToRow, tableToColumnsName, null)) continue;
                     } else if (!finalNaturalJoinPredicate.apply(rows)) continue;
-                    if (whereCtx != null && !evaluateMultipleCondition(whereCtx, tableToRow, tableToColumns, null))
-                        continue;
+                    if (whereCtx != null) {
+                        if (onConditions == null) // natural join or single table
+                            tableToRow.put(defaultTableName, finalNaturalJoinProjector.apply(rows));
+                        if (!evaluateMultipleCondition(whereCtx, tableToRow, tableToColumnsName, defaultTableName))
+                            continue;
+                    }
                     current = rows;
                     currentUsed = false;
                     return;
@@ -458,16 +471,52 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
             }
         };
 
-        if (naturalJoinProjector != null) {
-            var data = new ArrayList<Row>();
-            while (joinedTableIterator.hasNext()) {
-                data.add(naturalJoinProjector.apply(joinedTableIterator.next()));
+        var data = new ArrayList<Row>();
+        var projectedColumnsName = new ArrayList<String>();
+        for (var proj : projections) {
+            if (proj.column_full_name() != null) {
+                projectedColumnsName.add(proj.column_full_name().getText());
+                continue;
             }
-            return new QueryResult(data, naturalJoinColumnsName);
+            if (proj.table_name() != null) {
+                var tableName = proj.table_name().getText();
+                if (!tableToColumnsName.containsKey(tableName))
+                    throw new Exception("Invalid table name in projection: " + tableName);
+                projectedColumnsName.addAll(tableToColumnsName.get(tableName));
+                continue;
+            }
+            // * case
+            if (naturalJoinColumnsName == null)
+                throw new Exception("Ambiguous projection *");
+            projectedColumnsName.addAll(naturalJoinColumnsName);
+        }
+        var tableToColumnsNameWithDefault = new HashMap<>(tableToColumnsName);
+        if (naturalJoinColumnsName != null)
+            tableToColumnsNameWithDefault.put(defaultTableName, naturalJoinColumnsName);
+        while (joinedTableIterator.hasNext()) {
+            var rows = joinedTableIterator.next();
+            var joinedRow = finalNaturalJoinProjector.apply(rows);
+            var tableToRow = tableToRowFn.apply(rows);
+            if (joinedRow != null)
+                tableToRow.put(defaultTableName, joinedRow);
+            var projected = new ArrayList<Cell>();
+            for (var proj : projections) {
+                if (proj.column_full_name() != null) {
+                    projected.add(evaluateColumn(proj.column_full_name(), tableToRow, tableToColumnsNameWithDefault, defaultTableName));
+                    continue;
+                }
+                if (proj.table_name() != null) { // assert tableToRow contains tableName
+                    projected.addAll(tableToRow.get(proj.table_name().getText()).getEntries());
+                    continue;
+                }
+                // * case
+                assert joinedRow != null;
+                projected.addAll(joinedRow.getEntries());
+            }
+            data.add(new Row(projected));
         }
 
-
-        return null;
+        return new QueryResult(data, projectedColumnsName);
     }
 
     /**
@@ -479,14 +528,7 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
         try {
             var tableQueries = ctx.table_query();
             if (tableQueries.size() > 1) throw new Exception("doesn't support Cartesian product");
-            var tableQuery = tableQueries.get(0);
-            var tables = tableQuery.table_name();
-            if (tables.size() > 1) {
-                return joinFilterProjectTables(tableQuery, ctx.multiple_condition(), ctx.result_column());
-            } else {
-                var table = GetCurrentDB().get(tableQuery.table_name(0).getText());
-                return new QueryResult(filterSingleTable(ctx.multiple_condition(), table), table.columns.stream().map(Column::getColumnName).toList());
-            }
+            return joinFilterProjectTables(tableQueries.get(0), ctx.multiple_condition(), ctx.result_column());
 
         } catch (Exception e) {
             return new QueryResult(e.getMessage());
