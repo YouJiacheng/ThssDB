@@ -99,27 +99,25 @@ public class SQLHandler {
             queryResults.add(new QueryResult("commit transaction."));
             return queryResults;
         }
-        SQLParser.ParseContext ctx;
+        SQLParser.Sql_stmtContext stmt;
         try {
-            ctx = parseStatement(statement);
+            stmt = parseStatement(statement);
         } catch (Exception e) {
             String message = "Exception: illegal SQL statement! Error message: " + e.getMessage();
             return List.of(new QueryResult(message));
         }
         ImpVisitor visitor = new ImpVisitor(manager);
         var results = new ArrayList<QueryResult>();
-        for (var stmt : ctx.sql_stmt_list().sql_stmt()) {
-            var lockXManager = LockVisitor.visitManagerExclusiveLock(stmt);
-            var lockSDB = LockVisitor.visitDatabaseSharedLock(stmt);
-            var lockXDB = LockVisitor.visitDatabaseExclusiveLock(stmt);
-            var lockSTables = LockVisitor.visitTableSharedLock(stmt);
-            var lockXTables = LockVisitor.visitTableExclusiveLock(stmt);
-            results.add(visitor.visitSql_stmt(stmt));
-        }
+        var lockXManager = LockVisitor.visitManagerExclusiveLock(stmt);
+        var lockSDB = LockVisitor.visitDatabaseSharedLock(stmt);
+        var lockXDB = LockVisitor.visitDatabaseExclusiveLock(stmt);
+        var lockSTables = LockVisitor.visitTableSharedLock(stmt);
+        var lockXTables = LockVisitor.visitTableExclusiveLock(stmt);
+        results.add(visitor.visitSql_stmt(stmt));
         return results;
     }
 
-    public SQLParser.ParseContext parseStatement(String statement) {
+    public SQLParser.Sql_stmtContext parseStatement(String statement) {
         SQLLexer lexer = new SQLLexer(CharStreams.fromString(statement));
         lexer.removeErrorListeners();
         lexer.addErrorListener(SQLErrorListener.instance);
@@ -128,7 +126,7 @@ public class SQLHandler {
         SQLParser parser = new SQLParser(tokenStream);
         parser.removeErrorListeners();
         parser.addErrorListener(SQLErrorListener.instance);
-        return parser.parse();
+        return parser.sql_stmt();
     }
 
 }

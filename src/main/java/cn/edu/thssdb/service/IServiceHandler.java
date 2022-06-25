@@ -99,8 +99,9 @@ public class IServiceHandler implements IService.Iface {
             results.addAll(queryResults);
         }
         resp.setStatus(new Status(Global.SUCCESS_CODE));
-
-        if (results.size() == 1 && results.get(0) != null && results.get(0).resultType == QueryResultType.SELECT) {
+        if (results.isEmpty()) {
+            resp.addToColumnsList("empty response");
+        } else if (results.get(0) != null && results.get(0).resultType == QueryResultType.SELECT) {
             for (Row row : results.get(0).results) {
                 ArrayList<String> the_result = row.toStringList();
                 resp.addToRowList(the_result);
@@ -111,13 +112,15 @@ public class IServiceHandler implements IService.Iface {
             for (String column_name : results.get(0).getColumnNames()) {
                 resp.addToColumnsList(column_name);
             }
+            if (results.size() > 1) {
+                resp.addToRowList(List.of("More results are omitted"));
+            }
         } else {
             for (QueryResult queryResult : results) {
                 if (queryResult == null) resp.addToColumnsList("null");
                 else resp.addToColumnsList(queryResult.message);
             }
         }
-
         return resp;
     }
 }
