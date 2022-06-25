@@ -109,8 +109,11 @@ public class SQLHandler {
         ImpVisitor visitor = new ImpVisitor(manager);
         var results = new ArrayList<QueryResult>();
         for (var stmt : ctx.sql_stmt_list().sql_stmt()) {
-            var lockSTables = TableVisitor.visitLockS(stmt);
-            var lockXTables = TableVisitor.visitLockX(stmt);
+            var lockXManager = LockVisitor.visitManagerExclusiveLock(stmt);
+            var lockSDB = LockVisitor.visitDatabaseSharedLock(stmt);
+            var lockXDB = LockVisitor.visitDatabaseExclusiveLock(stmt);
+            var lockSTables = LockVisitor.visitTableSharedLock(stmt);
+            var lockXTables = LockVisitor.visitTableExclusiveLock(stmt);
             results.add(visitor.visitSql_stmt(stmt));
         }
         return results;

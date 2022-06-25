@@ -4,9 +4,23 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-public class TableVisitor {
+public class LockVisitor {
 
-    static public List<String> visitLockS(SQLParser.Sql_stmtContext ctx) {
+    static public boolean visitManagerExclusiveLock(SQLParser.Sql_stmtContext ctx) {
+        if (ctx.create_db_stmt() != null) return true;
+        return ctx.drop_db_stmt() != null;
+    }
+
+    static public boolean visitDatabaseSharedLock(SQLParser.Sql_stmtContext ctx) {
+        return ctx.show_meta_stmt() != null;
+    }
+
+    static public boolean visitDatabaseExclusiveLock(SQLParser.Sql_stmtContext ctx) {
+        if (ctx.create_table_stmt() != null) return true;
+        return ctx.drop_table_stmt() != null;
+    }
+
+    static public List<String> visitTableSharedLock(SQLParser.Sql_stmtContext ctx) {
         var data = new ArrayList<String>();
         var select = ctx.select_stmt();
         if (select != null)
@@ -16,7 +30,7 @@ public class TableVisitor {
         return data;
     }
 
-    static public List<String> visitLockX(SQLParser.Sql_stmtContext ctx) {
+    static public List<String> visitTableExclusiveLock(SQLParser.Sql_stmtContext ctx) {
         // create table only need Lock-X on database, but drop table need Lock-X on table
         if (ctx.drop_table_stmt() != null) return List.of(ctx.drop_table_stmt().table_name().getText());
         if (ctx.insert_stmt() != null) return List.of(ctx.insert_stmt().table_name().getText());
