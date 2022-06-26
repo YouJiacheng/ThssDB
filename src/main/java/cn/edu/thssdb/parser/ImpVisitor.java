@@ -508,7 +508,7 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
                 var tableName = proj.table_name().getText();
                 if (!tableToColumnsName.containsKey(tableName))
                     throw new Exception("Invalid table name in projection: " + tableName);
-                projectedColumnsName.addAll(tableToColumnsName.get(tableName));
+                projectedColumnsName.addAll(tableToColumnsName.get(tableName).stream().map(c -> tableName + "." + c).toList());
                 continue;
             }
             // * case
