@@ -141,12 +141,12 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
         return (constraint != null) && (constraint.K_NULL() != null);
     }
 
-    private List<String> getPrimaryKeys(SQLParser.Create_table_stmtContext ctx) {
+    private Set<String> getPrimaryKeys(SQLParser.Create_table_stmtContext ctx) {
         var constraint = ctx.table_constraint();
         if (constraint != null) {
-            return constraint.column_name().stream().map(RuleContext::getText).toList();
+            return constraint.column_name().stream().map(RuleContext::getText).collect(Collectors.toSet());
         }
-        return Collections.emptyList();
+        return Collections.emptySet();
     }
 
     /**
@@ -156,6 +156,9 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
     public String visitCreate_table_stmt(SQLParser.Create_table_stmtContext ctx) {
         try {
             var primaryKeys = getPrimaryKeys(ctx);
+            var columnNames = ctx.column_def().stream().map(c -> c.column_name().getText()).collect(Collectors.toSet());
+            if (!columnNames.containsAll(primaryKeys))
+                throw new Exception("Specified primary keys are not in table columns");
             var columns = new ArrayList<Column>();
             for (var col : ctx.column_def()) {
                 var name = col.column_name().getText();

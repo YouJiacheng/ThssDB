@@ -30,11 +30,11 @@ public class Table implements Iterable<Row> {
         lock = new SessionLock();
         for (int i = 0; i < this.columns.size(); i++) {
             if (this.columns.get(i).primary) {
-                if (this.primaryIndex >= 0) throw new MultiPrimaryKeyException(this.tableName);
+                if (this.primaryIndex >= 0) throw new MultiPrimaryKeyException(tableName);
                 this.primaryIndex = i;
             }
         }
-        if (this.primaryIndex < 0) throw new MultiPrimaryKeyException(this.tableName);
+        if (this.primaryIndex < 0) throw new RuntimeException("There is no primary key in table");
         ArrayList<Row> rowsOnDisk = deserialize();
         for (Row row : rowsOnDisk)
             index.put(row.getEntries().get(primaryIndex), row);
