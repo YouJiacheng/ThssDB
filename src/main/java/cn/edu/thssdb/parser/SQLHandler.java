@@ -4,7 +4,6 @@ import cn.edu.thssdb.exception.DatabaseNotExistException;
 import cn.edu.thssdb.query.QueryResult;
 import cn.edu.thssdb.schema.Database;
 import cn.edu.thssdb.schema.Manager;
-import cn.edu.thssdb.schema.Table;
 import cn.edu.thssdb.common.Global;
 import org.antlr.v4.runtime.CharStreams;
 import org.antlr.v4.runtime.CommonTokenStream;
@@ -12,44 +11,35 @@ import org.antlr.v4.runtime.CommonTokenStream;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.lang.management.ManagementFactory;
 import java.nio.file.Files;
+import java.nio.file.OpenOption;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.util.HashSet;
+import java.util.Set;
 
 
 public class SQLHandler {
     private final Manager manager;
-    private final static String INSERT = "insert";
-    private final static String DELETE = "delete";
-    private final static String UPDATE = "update";
-    private final static String BEGIN = "begin";
-    private final static String COMMIT = "commit";
-    private final static String SELECT = "select";
-    private static final String[] CMD_SET_WITHOUT_SCB = {INSERT, DELETE, UPDATE};
 
     public SQLHandler(Manager manager) {
         this.manager = manager;
     }
 
     public QueryResult evaluate(String statement, long session) {
-        String stmt_head = statement.split("\\s+")[0];
-
         System.out.println("session:" + session + "  " + statement);
-        Database currentDB = manager.getCurrentDatabase();
+        var currentDB = manager.getCurrentDatabase();
         if (currentDB == null) throw new DatabaseNotExistException();
         String databaseName = currentDB.getDatabaseName();
         if (statement.equals(Global.LOG_BEGIN_TRANSACTION)) {
-            System.out.println("BEGIN");
             try {
-                if (manager.currentSessions.contains(session)) throw new Exception("session already in a transaction.");
+                if (manager.inTransactionSessions.contains(session))
+                    throw new Exception("session already in a transaction.");
                 // 禁止恶意begin，非必要不记begin
                 if (session >= 0) manager.writeLog(statement, session);
-                manager.currentSessions.add(session);
-                manager.x_lockDict.put(session, new ArrayList<>());
-                manager.s_lockDict.put(session, new ArrayList<>());
+                manager.inTransactionSessions.add(session);
+                manager.sessionToLocks.put(session, new HashSet<>());
             } catch (Exception e) {
                 return new QueryResult(e.getMessage());
             }
@@ -58,38 +48,16 @@ public class SQLHandler {
 
         if (statement.equals(Global.LOG_COMMIT)) {
             try {
-                if (!manager.currentSessions.contains(session)) throw new Exception("session not in a transaction.");
-                System.out.println("COMMIT");
+                if (!manager.inTransactionSessions.contains(session))
+                    throw new Exception("session not in a transaction.");
                 // 禁止恶意commit，非必要不记commit
                 if (session >= 0) manager.writeLog(statement, session);
-                manager.currentSessions.remove(session);
-                ArrayList<String> table_list = manager.x_lockDict.get(session);
-                for (String table_name : table_list) {
-                    Table currentTable = currentDB.get(table_name);
-                    currentTable.releaseXLock(session);
-                }
-                table_list = manager.s_lockDict.get(session);
-                for (String table_name : table_list) {
-                    Table currentTable = currentDB.get(table_name);
-                    currentTable.releaseSLock(session);
-                }
-                table_list.clear();
-
-                String databaseLogFilename = Database.getDatabaseLogFilePath(databaseName);
-                File file = new File(databaseLogFilename);
-                BasicFileAttributes basicFileAttributes = Files.readAttributes(file.toPath(), BasicFileAttributes.class);
-                if (file.exists() && basicFileAttributes.isRegularFile() && basicFileAttributes.size() > 50000) {
-                    System.out.println("Clear database log");
-                    try {
-                        FileWriter writer = new FileWriter(databaseLogFilename);
-                        writer.write("");
-                        writer.close();
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-                    manager.persistDatabase(databaseName);
-                }
-
+                manager.inTransactionSessions.remove(session);
+                // rigorous 2PL
+                for (var tableName : manager.sessionToLocks.get(session))
+                    currentDB.get(tableName).lock.Release(session);
+                manager.sessionToLocks.remove(session);
+                mayCheckPoint(databaseName);
             } catch (Exception e) {
                 return new QueryResult(e.getMessage());
             }
@@ -103,40 +71,30 @@ public class SQLHandler {
             return new QueryResult(message);
         }
 
-        // log after parse
-        if (session >= 0 && Arrays.asList(CMD_SET_WITHOUT_SCB).contains(stmt_head.toLowerCase()))
-            manager.writeLog(statement, session);
-
-        ImpVisitor visitor = new ImpVisitor(manager);
-        var lockXManager = LockVisitor.visitManagerExclusiveLock(stmt);
-        var lockSDB = LockVisitor.visitDatabaseSharedLock(stmt);
-        var lockXDB = LockVisitor.visitDatabaseExclusiveLock(stmt);
-        var lockSTables = LockVisitor.visitTableSharedLock(stmt);
-        var lockXTables = LockVisitor.visitTableExclusiveLock(stmt);
-        ArrayList<String> x_lock_list = manager.x_lockDict.get(session);
-        ArrayList<String> s_lock_list = manager.s_lockDict.get(session);
-        ArrayList<String> new_x_list = new ArrayList<>(x_lock_list);
-        ArrayList<String> new_s_list = new ArrayList<>(s_lock_list);
-
-        for (String s : lockXTables){
-            if(!x_lock_list.contains(s)) {
-                if(s_lock_list.contains(s)){
-                    currentDB.get(s).releaseSLock(session);
-                    new_s_list.remove(s);
-                }
-                currentDB.get(s).takeXLock(session);
-                new_x_list.add(s);
+        ImpVisitor visitor = new ImpVisitor(manager, session);
+        // never lock manager
+        // lock database in manager member function.
+        var SLockTables = LockVisitor.visitTableSharedLock(stmt);
+        var XLockTables = LockVisitor.visitTableExclusiveLock(stmt);
+        var locks = manager.sessionToLocks.get(session);
+        try {
+            for (var tableName : SLockTables) {
+                currentDB.get(tableName).lock.SAcquire(session);
+                locks.add(tableName);
             }
-        }
-        for (String s : lockSTables){
-            if((!s_lock_list.contains(s)) && (!new_x_list.contains(s))) {
-                currentDB.get(s).takeSLock(session);
-                new_s_list.add(s);
+            for (var tableName : XLockTables) {
+                currentDB.get(tableName).lock.XAcquire(session);
+                locks.add(tableName);
             }
+        } catch (Exception e) {
+            return new QueryResult(e.getMessage());
         }
 
-        manager.s_lockDict.put(session, new_s_list);
-        manager.x_lockDict.put(session, new_x_list);
+        // log after parse and lock
+        if (session >= 0) // don't log in recover
+            if (stmt.insert_stmt() != null || stmt.delete_stmt() != null || stmt.update_stmt() != null)
+                manager.writeLog(statement, session); // log only for write table
+
         return visitor.visitSql_stmt(stmt);
     }
 
@@ -150,6 +108,22 @@ public class SQLHandler {
         parser.removeErrorListeners();
         parser.addErrorListener(SQLErrorListener.instance);
         return parser.sql_stmt();
+    }
+
+    // NOT Finished
+    private void mayCheckPoint(String databaseName) {
+        try {
+            var path = Path.of(manager.get(databaseName).getDatabaseLogFilePath());
+            var fileAttr = Files.readAttributes(path, BasicFileAttributes.class);
+            if (fileAttr.isRegularFile() && fileAttr.size() > 50000) {
+                System.out.println("Clear database log");
+                Files.writeString(path, "", StandardOpenOption.TRUNCATE_EXISTING);
+                // TODO: Handle active transaction
+                manager.persistDatabase(databaseName);
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 
 }

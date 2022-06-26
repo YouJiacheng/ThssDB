@@ -34,10 +34,12 @@ import java.util.stream.StreamSupport;
 
 public class ImpVisitor extends SQLBaseVisitor<Object> {
     private final Manager manager;
+    private final long session;
 
-    public ImpVisitor(Manager manager) {
+    public ImpVisitor(Manager manager, long session) {
         super();
         this.manager = manager;
+        this.session = session;
     }
 
     private Database GetCurrentDB() {
@@ -71,7 +73,7 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
     public String visitCreate_db_stmt(SQLParser.Create_db_stmtContext ctx) {
         try {
             manager.createDatabaseIfNotExists(ctx.database_name().getText().toLowerCase());
-            manager.persist();
+            manager.persistMeta();
         } catch (Exception e) {
             return e.getMessage();
         }
@@ -84,7 +86,8 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
     @Override
     public String visitDrop_db_stmt(SQLParser.Drop_db_stmtContext ctx) {
         try {
-            manager.deleteDatabase(ctx.database_name().getText().toLowerCase());
+            manager.deleteDatabase(ctx.database_name().getText().toLowerCase(), session);
+            manager.persistMeta();
         } catch (Exception e) {
             return e.getMessage();
         }
@@ -97,7 +100,7 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
     @Override
     public String visitUse_db_stmt(SQLParser.Use_db_stmtContext ctx) {
         try {
-            manager.switchDatabase(ctx.database_name().getText().toLowerCase());
+            manager.switchDatabase(ctx.database_name().getText().toLowerCase(), session);
         } catch (Exception e) {
             return e.getMessage();
         }
@@ -165,7 +168,9 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
                 var notNull = getNotNull(col) || primary; // primary key is not null!
                 columns.add(new Column(name, type, primary, notNull, maxLen));
             }
-            GetCurrentDB().create(ctx.table_name().getText(), columns.toArray(new Column[0]));
+            var db = GetCurrentDB();
+            db.create(ctx.table_name().getText(), columns);
+            db.persistMeta();
             return "Create table " + ctx.table_name().getText() + ".";
         } catch (Exception e) {
             return e.getMessage();

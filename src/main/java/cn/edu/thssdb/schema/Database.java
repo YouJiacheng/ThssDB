@@ -8,39 +8,35 @@ import cn.edu.thssdb.common.Global;
 import java.io.*;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.List;
 
-
-// TODO: lock control
-// TODO Query: please also add other functions needed at Database level.
 
 public class Database {
 
-    private String databaseName;
+    private final String databaseName;
     private HashMap<String, Table> tableMap;
-    ReentrantReadWriteLock lock;
+    SessionLock lock;
 
     public Database(String databaseName) {
         this.databaseName = databaseName;
-        this.tableMap = new HashMap<>();
-        this.lock = new ReentrantReadWriteLock();
-        File tableFolder = new File(this.getDatabaseTableFolderPath());
-        if (!tableFolder.exists())
-            tableFolder.mkdirs();
+        tableMap = new HashMap<>();
+        lock = new SessionLock();
+        File tableFolder = new File(getDatabaseTableFolderPath());
+        if (!(tableFolder.exists() || tableFolder.mkdirs())) throw new RuntimeException("Create folder fail");
         recover();
     }
 
 
     // Operations: (basic) persist, create tables
-    private void persist() {
+    public synchronized void persistMeta() {
         // 把各表的元数据写到磁盘上
-        for (Table table : this.tableMap.values()) {
-            String filename = table.getTableMetaPath();
-            ArrayList<Column> columns = table.columns;
+        for (var table : tableMap.values()) {
+            var filename = table.getTableMetaPath();
+            var columns = table.columns;
             try {
                 FileOutputStream fileOutputStream = new FileOutputStream(filename);
                 OutputStreamWriter outputStreamWriter = new OutputStreamWriter(fileOutputStream);
-                for (Column column : columns)
+                for (var column : columns)
                     outputStreamWriter.write(column.toString() + "\n");
                 outputStreamWriter.close();
                 fileOutputStream.close();
@@ -50,69 +46,51 @@ public class Database {
         }
     }
 
-    public void create(String tableName, Column[] columns) {
-        try {
-            // TODO add lock control.
-            if (this.tableMap.containsKey(tableName))
-                throw new DuplicateTableException(tableName);
-            Table table = new Table(this.databaseName, tableName, columns);
-            this.tableMap.put(tableName, table);
-            this.persist();
-        } finally {
-            // TODO add lock control.
-        }
+    public synchronized void persistTable() {
+        for (var table : tableMap.values())
+            table.persist();
     }
 
-    public Table get(String tableName) {
-        try {
-            // TODO add lock control.
-            if (!this.tableMap.containsKey(tableName))
-                throw new TableNotExistException(tableName);
-            return this.tableMap.get(tableName);
-        } finally {
-            // TODO add lock control.
-        }
+    // lock control in SQLHandler.evaluate, lock database
+    public synchronized void create(String tableName, List<Column> columns) {
+        if (tableMap.containsKey(tableName)) throw new DuplicateTableException(tableName);
+        tableMap.put(tableName, new Table(databaseName, tableName, columns));
+        persistMeta();
     }
 
-    public void drop(String tableName) {
-        try {
-            // TODO add lock control.
-            if (!this.tableMap.containsKey(tableName))
-                throw new TableNotExistException(tableName);
-            Table table = this.tableMap.get(tableName);
-            String filename = table.getTableMetaPath();
-            File file = new File(filename);
+    // NO Lock Needed
+    public synchronized Table get(String tableName) {
+        if (!tableMap.containsKey(tableName)) throw new TableNotExistException(tableName);
+        return tableMap.get(tableName);
+    }
+
+    // lock control in SQLHandler.evaluate, lock database and table
+    public synchronized void drop(String tableName) {
+        var table = get(tableName);
+        String filename = table.getTableMetaPath();
+        File file = new File(filename);
+        if (file.isFile() && !file.delete())
+            throw new FileIOException(tableName + " _meta  when drop a table in database");
+        table.dropTable();
+        tableMap.remove(tableName);
+    }
+
+    // lock control in Manager.deleteDatabase
+    public synchronized void dropDatabase() {
+        for (var table : tableMap.values()) {
+            File file = new File(table.getTableMetaPath());
             if (file.isFile() && !file.delete())
-                throw new FileIOException(tableName + " _meta  when drop a table in database");
-
+                throw new FileIOException(this.databaseName + " _meta when drop the database");
             table.dropTable();
-            this.tableMap.remove(tableName);
-        } finally {
-            // TODO add lock control.
         }
+        tableMap.clear();
+        tableMap = null;
     }
 
-    public void dropDatabase() {
-        try {
-            // TODO add lock control.
-            for (Table table : this.tableMap.values()) {
-                File file = new File(table.getTableMetaPath());
-                if (file.isFile() && !file.delete())
-                    throw new FileIOException(this.databaseName + " _meta when drop the database");
-                table.dropTable();
-            }
-            this.tableMap.clear();
-            this.tableMap = null;
-        } finally {
-            // TODO add lock control.
-        }
-    }
-
-    private void recover() {
-        System.out.println("! try to recover database " + this.databaseName);
+    private synchronized void recover() {
+        System.out.println("! try to recover database " + databaseName + " from disk");
         File tableFolder = new File(this.getDatabaseTableFolderPath());
         File[] files = tableFolder.listFiles();
-//        for(File f: files) System.out.println("...." + f.getName());
         if (files == null) return;
 
         for (File file : files) {
@@ -120,54 +98,38 @@ public class Database {
             try {
                 String fileName = file.getName();
                 String tableName = fileName.substring(0, fileName.length() - Global.META_SUFFIX.length());
-                if (this.tableMap.containsKey(tableName))
-                    throw new DuplicateTableException(tableName);
+                if (tableMap.containsKey(tableName)) throw new DuplicateTableException(tableName);
 
-                ArrayList<Column> columnList = new ArrayList<>();
-                InputStreamReader reader = new InputStreamReader(new FileInputStream(file));
-                BufferedReader bufferedReader = new BufferedReader(reader);
+                var columnList = new ArrayList<Column>();
+                var reader = new InputStreamReader(new FileInputStream(file));
+                var bufferedReader = new BufferedReader(reader);
                 String readLine;
-                while ((readLine = bufferedReader.readLine()) != null)
-                    columnList.add(Column.parseColumn(readLine));
+                while ((readLine = bufferedReader.readLine()) != null) columnList.add(Column.parseColumn(readLine));
                 bufferedReader.close();
                 reader.close();
-                Table table = new Table(this.databaseName, tableName, columnList.toArray(new Column[0]));
-                System.out.println(table.toString());
+                var table = new Table(databaseName, tableName, columnList);
+                System.out.println(table);
                 for (Row row : table)
                     System.out.println(row.toString());
-                this.tableMap.put(tableName, table);
-            } catch (Exception ignored) {
+                tableMap.put(tableName, table);
+            } catch (Exception e) {
+                e.printStackTrace();
             }
-        }
-    }
-
-    public void quit() {
-        try {
-            this.lock.writeLock().lock();
-            for (Table table : this.tableMap.values())
-                table.persist();
-            this.persist();
-        } finally {
-            this.lock.writeLock().unlock();
         }
     }
 
 
     // Find position
     public String getDatabasePath() {
-        return Global.DBMS_DIR + File.separator + "data" + File.separator + this.databaseName;
+        return Global.DBMS_DIR + File.separator + "data" + File.separator + databaseName;
     }
 
     public String getDatabaseTableFolderPath() {
-        return this.getDatabasePath() + File.separator + "tables";
+        return getDatabasePath() + File.separator + "tables";
     }
 
     public String getDatabaseLogFilePath() {
-        return this.getDatabasePath() + File.separator + "log";
-    }
-
-    public static String getDatabaseLogFilePath(String databaseName) {
-        return Global.DBMS_DIR + File.separator + "data" + File.separator + databaseName + File.separator + "log";
+        return getDatabasePath() + File.separator + "log";
     }
 
     // Other utils.
@@ -175,16 +137,11 @@ public class Database {
         return this.databaseName;
     }
 
-    public String getTableInfo(String tableName) {
-        return get(tableName).toString();
-    }
-
     public String toString() {
         if (this.tableMap.isEmpty()) return "{\n[DatabaseName: " + databaseName + "]\n" + Global.DATABASE_EMPTY + "}\n";
         StringBuilder result = new StringBuilder("{\n[DatabaseName: " + databaseName + "]\n");
-        for (Table table : this.tableMap.values())
-            if (table != null)
-                result.append(table.toString());
-        return result.toString() + "}\n";
+        for (Table table : tableMap.values())
+            if (table != null) result.append(table);
+        return result + "}\n";
     }
 }

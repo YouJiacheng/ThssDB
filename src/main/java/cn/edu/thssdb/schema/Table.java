@@ -7,116 +7,27 @@ import cn.edu.thssdb.common.Pair;
 
 import java.io.*;
 import java.util.*;
-import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import static cn.edu.thssdb.type.ColumnType.STRING;
 
 
-// TODO lock control, variables init.
-
+// Lock control logic is written in SQLHandler.evaluate
 public class Table implements Iterable<Row> {
-    private static class MyLock {
-        public boolean XLocked = false;
-        Long XSession;
-        public ArrayList<Long> SLocked;
-        public MyLock(){
-            SLocked = new ArrayList<>();
-        }
-        public synchronized void XLock(Long se){
-            if(XLocked || se.equals(XSession))
-                return;
-            
-            try {
-                while(XLocked)
-                    this.wait();
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            }
-            XSession = se;
-            XLocked = true;
-            this.notifyAll();
-        }
-        public synchronized void XRelease(Long se){
-            if(!XLocked)
-                return;
-            if(se.equals(XSession)) {
-                XLocked = false;
-                this.notifyAll();
-            }
-        }
-        public synchronized void SLock(Long se){
-            try {
-                while(XLocked && !XSession.equals(se))
-                        this.wait();
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            }
-            if(!SLocked.contains(se))
-                SLocked.add(se);
-        }
-        public synchronized void SRelease(Long se){
-            SLocked.remove(se);
-        }
-    }
-    private final ReadWriteLock lock;
-    private String databaseName;
+    private final String databaseName;
     public String tableName;
     public ArrayList<Column> columns;
     public BPlusTree<Cell, Row> index;
     public int primaryIndex;
-    private MyLock m_lock;
-
-    // ADD lock variables for S, X locks and etc here.
-
-    // TODO: table/tuple level locks
-
-    public void takeSLock(Long sessionId) {
-//        lock.readLock().lock();
-//        System.out.println("--S locked by "+ sessionId);
-//        System.out.println(lock.readLock().toString());
-        m_lock.SLock(sessionId);
-    }
-
-    public void releaseSLock(Long sessionId) {
-//        System.out.println("count is "+lock.getReadHoldCount() );
-//        final int holdCount = lock.getReadHoldCount();
-//            for (int i = 0; i < holdCount; i++) {
-//            lock.readLock().unlock();
-//           System.out.println("--S release by "+ sessionId);
-//       }
-        m_lock.XRelease(sessionId);
-    }
-
-    public void takeXLock(Long sessionId) {
-//        lock.writeLock().lock();
-//        System.out.println("--X locked by "+ sessionId);
-        m_lock.XLock(sessionId);
-    } // 在test成功前提下拿X锁。返回值false表示session之前已拥有这个表的X锁。
-
-    public void releaseXLock(Long sessionId) {
-//        lock.writeLock().unlock();
-//        System.out.println("--X release by "+ sessionId);
-        m_lock.XRelease(sessionId);
-    }
-    public void printLock(){
-        System.out.println("=========");
-        System.out.println("X lock");
-        System.out.println(m_lock.XSession);
-        System.out.println("S lock");
-        System.out.println("=========");
-    }
-
+    public SessionLock lock;
 
     // Initiate: Table, recover
-    public Table(String databaseName, String tableName, Column[] columns) {
-        this.lock = new ReentrantReadWriteLock();
+    public Table(String databaseName, String tableName, List<Column> columns) {
         this.databaseName = databaseName;
         this.tableName = tableName;
-        this.columns = new ArrayList<>(Arrays.asList(columns));
+        this.columns = new ArrayList<>(columns);
         this.index = new BPlusTree<>();
         this.primaryIndex = -1;
-        m_lock = new MyLock();
+        lock = new SessionLock();
         for (int i = 0; i < this.columns.size(); i++) {
             if (this.columns.get(i).primary) {
                 if (this.primaryIndex >= 0) throw new MultiPrimaryKeyException(this.tableName);
@@ -124,47 +35,40 @@ public class Table implements Iterable<Row> {
             }
         }
         if (this.primaryIndex < 0) throw new MultiPrimaryKeyException(this.tableName);
-
-        // TODO initiate lock status.
-
-        recover();
-    }
-
-    private void recover() {
-        // read from disk for recovering
-        try {
-            //lock.writeLock().lock();
-            ArrayList<Row> rowsOnDisk = deserialize();
-            for (Row row : rowsOnDisk)
-                this.index.put(row.getEntries().get(this.primaryIndex), row);
-        } finally {
-            //lock.writeLock().unlock();
-        }
+        ArrayList<Row> rowsOnDisk = deserialize();
+        for (Row row : rowsOnDisk)
+            index.put(row.getEntries().get(primaryIndex), row);
     }
 
 
     // Operations: get, insert, delete, update, dropTable, you can add other operations.
-    // remember to use locks to fill the TODOs
+    // lock in SQLHandler.evaluate
 
     public Row get(Cell primaryCell) {
-        try {
-            //lock.readLock().lock();
-            return this.index.get(primaryCell);
-        } finally {
-           // lock.readLock().unlock();
-        }
+        return this.index.get(primaryCell);
     }
 
     public void insert(List<Row> rows) {
-        try {
-            //lock.writeLock().lock();
-            checkPutValid(rows, new TreeSet<>());
-            // check all, then modify for atomic
-            for (var row : rows)
-                index.put(row.getEntries().get(primaryIndex), row);
-        } finally {
-           // lock.writeLock().unlock();
-        }
+        checkPutValid(rows, new TreeSet<>());
+        // check all, then modify for atomic
+        for (var row : rows)
+            index.put(row.getEntries().get(primaryIndex), row);
+    }
+
+    public void delete(List<Cell> keys) {
+        checkRemoveValid(keys);
+        // check all, then modify for atomic
+        for (var key : keys)
+            index.remove(key);
+    }
+
+    public void update(List<Cell> oldKeys, List<Row> newRows) {
+        checkPutValid(newRows, checkRemoveValid(oldKeys));
+        // check all, then modify for atomic
+        for (var key : oldKeys)
+            index.remove(key);
+        for (var row : newRows)
+            index.put(row.getEntries().get(primaryIndex), row);
     }
 
     private void checkPutValid(List<Row> rows, TreeSet<Cell> removed) {
@@ -185,32 +89,6 @@ public class Table implements Iterable<Row> {
         for (var key : keys)
             if (!index.contains(key)) throw new KeyNotExistException();
         return keySet;
-    }
-
-    public void delete(List<Cell> keys) {
-        try {
-            //lock.writeLock().lock();
-            checkRemoveValid(keys);
-            // check all, then modify for atomic
-            for (var key : keys)
-                index.remove(key);
-        } finally {
-            //lock.writeLock().unlock();
-        }
-    }
-
-    public void update(List<Cell> oldKeys, List<Row> newRows) {
-        try {
-            //lock.writeLock().lock();
-            checkPutValid(newRows, checkRemoveValid(oldKeys));
-            // check all, then modify for atomic
-            for (var key : oldKeys)
-                index.remove(key);
-            for (var row : newRows)
-                index.put(row.getEntries().get(primaryIndex), row);
-        } finally {
-            //lock.writeLock().unlock();
-        }
     }
 
     private void serialize() {
@@ -257,27 +135,17 @@ public class Table implements Iterable<Row> {
         }
     }
 
-    public void persist() {
-        try {
-            //lock.readLock().lock();
-            serialize();
-        } finally {
-            //lock.readLock().unlock();
-        }
+    public synchronized void persist() {
+        serialize();
     }
 
     public void dropTable() { // remove table data file
-        try {
-            //lock.writeLock().lock();
-            File tableFolder = new File(this.getTableFolderPath());
-            if (!tableFolder.exists() ? !tableFolder.mkdirs() : !tableFolder.isDirectory())
-                throw new FileIOException(this.getTableFolderPath() + " when dropTable");
-            File tableFile = new File(this.getTablePath());
-            if (tableFile.exists() && !tableFile.delete())
-                throw new FileIOException(this.getTablePath() + " when dropTable");
-        } finally {
-           // lock.writeLock().unlock();
-        }
+        File tableFolder = new File(this.getTableFolderPath());
+        if (!tableFolder.exists() ? !tableFolder.mkdirs() : !tableFolder.isDirectory())
+            throw new FileIOException(this.getTableFolderPath() + " when dropTable");
+        File tableFile = new File(this.getTablePath());
+        if (tableFile.exists() && !tableFile.delete())
+            throw new FileIOException(this.getTablePath() + " when dropTable");
     }
 
 
@@ -286,11 +154,11 @@ public class Table implements Iterable<Row> {
 
     // Operations
 
-    private class TableIterator implements Iterator<Row> {
-        private Iterator<Pair<Cell, Row>> iterator;
+    private static class TableIterator implements Iterator<Row> {
+        private final Iterator<Pair<Cell, Row>> iterator;
 
         TableIterator(Table table) {
-            this.iterator = table.index.iterator();
+            iterator = table.index.iterator();
         }
 
         @Override
@@ -327,10 +195,6 @@ public class Table implements Iterable<Row> {
         }
     }
 
-    private Boolean containsRowByKey(Row row) {
-        return index.contains(row.getEntries().get(primaryIndex));
-    }
-
     public String getTableFolderPath() {
         return Global.DBMS_DIR + File.separator + "data" + File.separator + databaseName + File.separator + "tables";
     }
@@ -343,9 +207,10 @@ public class Table implements Iterable<Row> {
         return this.getTablePath() + Global.META_SUFFIX;
     }
 
+    @Override
     public String toString() {
         StringBuilder s = new StringBuilder("Table " + this.tableName + ": ");
-        for (Column column : this.columns) s.append("\t(").append(column.toString()).append(')');
+        for (var column : columns) s.append("\t(").append(column.toString()).append(')');
         return s + "\n";
     }
 

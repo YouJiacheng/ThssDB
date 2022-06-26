@@ -18,20 +18,12 @@ import cn.edu.thssdb.type.QueryResultType;
 import cn.edu.thssdb.common.Global;
 import org.apache.thrift.TException;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Date;
-import java.util.List;
+import java.util.*;
 
 
 public class IServiceHandler implements IService.Iface {
     public static Manager manager;
     public long sessionCount = 0;
-    private final static String INSERT = "insert";
-    private final static String UPDATE = "update";
-    private final static String DELETE = "delete";
-    private final static String SELECT = "select";
-    private final static String[] CMD_HEADS = {INSERT, UPDATE, DELETE, SELECT};
     public static SQLHandler sqlHandler;
 
     public IServiceHandler() {
@@ -42,7 +34,7 @@ public class IServiceHandler implements IService.Iface {
 
 
     @Override
-    public GetTimeResp getTime(GetTimeReq req) throws TException {
+    public GetTimeResp getTime(GetTimeReq req) {
         GetTimeResp resp = new GetTimeResp();
         resp.setTime(new Date().toString());
         resp.setStatus(new Status(Global.SUCCESS_CODE));
@@ -50,7 +42,7 @@ public class IServiceHandler implements IService.Iface {
     }
 
     @Override
-    public ConnectResp connect(ConnectReq req) throws TException {
+    public ConnectResp connect(ConnectReq req) {
         long session = sessionCount++;
         ConnectResp resp = new ConnectResp();
         resp.setStatus(new Status(Global.SUCCESS_CODE));
@@ -59,7 +51,7 @@ public class IServiceHandler implements IService.Iface {
     }
 
     @Override
-    public DisconnetResp disconnect(DisconnetReq req) throws TException {
+    public DisconnetResp disconnect(DisconnetReq req) {
         // TODO
         DisconnetResp resp = new DisconnetResp();
         resp.setStatus(new Status(Global.SUCCESS_CODE));
@@ -67,7 +59,7 @@ public class IServiceHandler implements IService.Iface {
     }
 
     @Override
-    public ExecuteStatementResp executeStatement(ExecuteStatementReq req) throws TException {
+    public ExecuteStatementResp executeStatement(ExecuteStatementReq req) {
         ExecuteStatementResp resp = new ExecuteStatementResp();
         long session = req.getSessionId();
         if (session < 0 || session >= sessionCount) {
@@ -84,9 +76,10 @@ public class IServiceHandler implements IService.Iface {
         for (String statement : statements) {
             statement = statement.trim();
             if (statement.length() == 0) continue;
-            String cmd_head = command.split("\\s+")[0];
             QueryResult queryResult;
-            if ((Arrays.asList(CMD_HEADS).contains(cmd_head.toLowerCase())) && !manager.currentSessions.contains(session)) {
+            if (!manager.inTransactionSessions.contains(session) && !statement.startsWith("begin") && !statement.startsWith("commit")) {
+                // transaction for all statement
+                // auto commit
                 sqlHandler.evaluate("begin transaction", session);
                 queryResult = sqlHandler.evaluate(statement, session);
                 sqlHandler.evaluate("commit", session);

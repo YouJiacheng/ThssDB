@@ -8,68 +8,58 @@ import cn.edu.thssdb.common.Global;
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
-
-// TODO: add lock control
-// TODO: complete readLog() function according to writeLog() for recovering transaction
+import java.util.*;
 
 public class Manager {
     private final HashMap<String, Database> databases;
-    private static ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
     public Database currentDatabase;
-    public ArrayList<Long> currentSessions;
-    public ArrayList<Long> waitSessions;
+    public ArrayList<Long> inTransactionSessions;
     public static SQLHandler sqlHandler;
-    public HashMap<Long, ArrayList<String>> x_lockDict;
-    public HashMap<Long, ArrayList<String>> s_lockDict;
-    //  private final static String INSERT = "insert";
-//  private final static String DELETE = "delete";
-//  private final static String UPDATE = "update";
-    private final static String BEGIN = "begin";
-    private final static String COMMIT = "commit";
-//  private static String[] CMD_SET_WITHOUT_SBC = {INSERT, DELETE, UPDATE};
+    public final Map<Long, Set<String>> sessionToLocks;
 
     public static Manager getInstance() {
         return Manager.ManagerHolder.INSTANCE;
     }
 
     public Manager() {
-        // TODO: init possible additional variables
         databases = new HashMap<>();
         currentDatabase = null;
-        currentSessions = new ArrayList<>();
+        inTransactionSessions = new ArrayList<>();
         sqlHandler = new SQLHandler(this);
-        x_lockDict = new HashMap<>();
-        s_lockDict = new HashMap<>();
+        sessionToLocks = new HashMap<>();
         File managerFolder = new File(Global.DBMS_DIR + File.separator + "data");
-        if (!managerFolder.exists()) managerFolder.mkdirs();
+        if (!(managerFolder.exists() || managerFolder.mkdirs())) throw new RuntimeException("create file failed");
         recover();
+        createDatabaseIfNotExists("db");
+        persistMeta();
     }
 
-    public void deleteDatabase(String databaseName) {
+    public void deleteDatabase(String databaseName, long session) {
+        var db = get(databaseName); // synchronized
         try {
-            // TODO: add lock control
-            if (!databases.containsKey(databaseName)) throw new DatabaseNotExistException(databaseName);
-            Database database = databases.get(databaseName);
-            database.dropDatabase();
-            databases.remove(databaseName);
-
+            db.lock.XAcquire(session); // Deadlock if acquire in synchronized
+            db.dropDatabase(); // synchronized by db
+            synchronized (this) {
+                databases.remove(databaseName);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
         } finally {
-            // TODO: add lock control
+            db.lock.XRelease(session);
         }
     }
 
-    public void switchDatabase(String databaseName) {
+    public void switchDatabase(String databaseName, long session) {
         try {
-            // TODO: add lock control
-            if (!databases.containsKey(databaseName)) throw new DatabaseNotExistException(databaseName);
-            currentDatabase = databases.get(databaseName);
-        } finally {
-            // TODO: add lock control
+            var db = get(databaseName); // synchronized
+            db.lock.SAcquire(session); // Deadlock if acquire in synchronized
+            synchronized (this) {
+                if (currentDatabase != db) // release if db change
+                    if (currentDatabase != null) currentDatabase.lock.SRelease(session);
+                currentDatabase = db;
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
         }
     }
 
@@ -86,49 +76,28 @@ public class Manager {
     }
 
     // utils:
-
-    // Lock example: quit current manager
-    public void quit() {
-        try {
-            // lock.writeLock().lock();
-            for (Database database : databases.values())
-                database.quit();
-            persist();
-            databases.clear();
-        } finally {
-            // lock.writeLock().unlock();
+    // NO Lock Needed
+    public synchronized void quit() {
+        for (var db : databases.values()) {
+            db.persistMeta();
+            db.persistTable();
         }
+        persistMeta();
     }
 
-    public Database get(String databaseName) {
-        try {
-            // TODO: add lock control
-            if (!databases.containsKey(databaseName)) throw new DatabaseNotExistException(databaseName);
-            return databases.get(databaseName);
-        } finally {
-            // TODO: add lock control
-        }
+    // NO Lock Needed
+    public synchronized Database get(String databaseName) {
+        if (!databases.containsKey(databaseName)) throw new DatabaseNotExistException(databaseName);
+        return databases.get(databaseName);
     }
 
-    public void createDatabaseIfNotExists(String databaseName) {
-        try {
-            // TODO: add lock control
-            if (!databases.containsKey(databaseName)) databases.put(databaseName, new Database(databaseName));
-            if (currentDatabase == null) {
-                try {
-                    // TODO: add lock control
-                    if (!databases.containsKey(databaseName)) throw new DatabaseNotExistException(databaseName);
-                    currentDatabase = databases.get(databaseName);
-                } finally {
-                    // TODO: add lock control
-                }
-            }
-        } finally {
-            // TODO: add lock control
-        }
+    // NO Lock Needed
+    public synchronized void createDatabaseIfNotExists(String databaseName) {
+        if (!databases.containsKey(databaseName)) databases.put(databaseName, new Database(databaseName));
+        currentDatabase = get(databaseName);
     }
 
-    public void persist() {
+    public synchronized void persistMeta() {
         try {
             FileOutputStream fos = new FileOutputStream(Manager.getManagerDataFilePath());
             OutputStreamWriter writer = new OutputStreamWriter(fos);
@@ -141,24 +110,21 @@ public class Manager {
         }
     }
 
-    public void persistDatabase(String databaseName) {
-        try {
-            // TODO: add lock control
-            Database database = databases.get(databaseName);
-            database.quit();
-            persist();
-        } finally {
-            // TODO: add lock control
-        }
+    // NO Lock Needed
+    public synchronized void persistDatabase(String databaseName) {
+        var db = get(databaseName);
+        db.persistMeta();
+        db.persistTable();
+        persistMeta();
     }
 
 
     // Log control and recover from logs.
-    public void writeLog(String statement, long logsession) {
-        String logFilename = this.currentDatabase.getDatabaseLogFilePath();
+    public void writeLog(String statement, long sId) {
+        String logFilename = currentDatabase.getDatabaseLogFilePath();
         try {
             FileWriter writer = new FileWriter(logFilename, true);
-            writer.write(logsession + "\n" + statement + "\n");
+            writer.write(sId + "\n" + statement + "\n");
             writer.close();
         } catch (Exception e) {
             throw new FileIOException(logFilename);
@@ -179,7 +145,7 @@ public class Manager {
 
     // TODO: read Log in transaction to recover.
     public void readLog(String databaseName) throws IOException {
-        System.out.println("??!! try to recover database " + databaseName);
+        System.out.println("??!! try to recover database " + databaseName + " from log");
         var logLines = Files.readAllLines(Path.of(getDatabaseLogFilePath(databaseName)));
         var logItems = new ArrayList<LogItem>();
         for (var it = logLines.iterator(); it.hasNext(); ) {
@@ -209,17 +175,20 @@ public class Manager {
 
     }
 
-    public void recover() {
+    public synchronized void recover() {
         try {
             System.out.println("??!! try to recover manager");
             var databases = Files.readAllLines(Path.of(getManagerDataFilePath()));
-            for (var database : databases) {
-                System.out.println("??!!" + database);
-                createDatabaseIfNotExists(database);
-                readLog(database);
+            try {
+                for (var database : databases) {
+                    System.out.println("??!!" + database);
+                    createDatabaseIfNotExists(database);
+                    readLog(database);
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
             }
-        } catch (Exception e) {
-            e.printStackTrace();
+        } catch (Exception ignored) {
         }
     }
 
