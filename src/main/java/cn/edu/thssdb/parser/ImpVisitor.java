@@ -43,7 +43,7 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
     }
 
     private Database GetCurrentDB() {
-        Database currentDB = manager.getCurrentDatabase();
+        var currentDB = manager.getCurrentDatabase();
         if (currentDB == null) {
             throw new DatabaseNotExistException();
         }

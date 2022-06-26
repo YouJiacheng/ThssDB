@@ -5,14 +5,18 @@ import java.util.Collections;
 import java.util.List;
 
 public class LockVisitor {
+
+    static public boolean visitDatabaseStmt(SQLParser.Sql_stmtContext ctx) {
+        return (ctx.create_db_stmt() != null || ctx.drop_db_stmt() != null || ctx.use_db_stmt() != null);
+    }
+
     static public List<String> visitTableSharedLock(SQLParser.Sql_stmtContext ctx) {
         if (ctx.show_meta_stmt() != null) return List.of(ctx.show_meta_stmt().table_name().getText());
         var data = new ArrayList<String>();
         var select = ctx.select_stmt();
-        if (select != null)
-            for (var q : select.table_query())
-                for (var t : q.table_name())
-                    data.add(t.getText());
+        if (select != null) for (var q : select.table_query())
+            for (var t : q.table_name())
+                data.add(t.getText());
         return data;
     }
 

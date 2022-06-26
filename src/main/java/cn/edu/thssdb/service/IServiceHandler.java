@@ -16,7 +16,6 @@ import cn.edu.thssdb.schema.Manager;
 import cn.edu.thssdb.schema.Row;
 import cn.edu.thssdb.type.QueryResultType;
 import cn.edu.thssdb.common.Global;
-import org.apache.thrift.TException;
 
 import java.util.*;
 
@@ -58,6 +57,15 @@ public class IServiceHandler implements IService.Iface {
         return resp;
     }
 
+    private boolean shouldAutoCommit(String stmt) {
+        stmt = stmt.toLowerCase();
+        if (stmt.equals(Global.LOG_BEGIN_TRANSACTION)) return false;
+        if (stmt.equals(Global.LOG_COMMIT)) return false;
+        if (stmt.startsWith("create database")) return false;
+        if (stmt.startsWith("drop database")) return false;
+        return !stmt.startsWith("use database");
+    }
+
     @Override
     public ExecuteStatementResp executeStatement(ExecuteStatementReq req) {
         ExecuteStatementResp resp = new ExecuteStatementResp();
@@ -77,7 +85,7 @@ public class IServiceHandler implements IService.Iface {
             statement = statement.trim();
             if (statement.length() == 0) continue;
             QueryResult queryResult;
-            if (!manager.inTransactionSessions.contains(session) && !statement.startsWith("begin") && !statement.startsWith("commit")) {
+            if (!manager.inTransactionSessions.contains(session) && shouldAutoCommit(statement)) {
                 // transaction for all statement
                 // auto commit
                 sqlHandler.evaluate("begin transaction", session);

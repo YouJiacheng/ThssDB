@@ -2,22 +2,17 @@ package cn.edu.thssdb.parser;
 
 import cn.edu.thssdb.exception.DatabaseNotExistException;
 import cn.edu.thssdb.query.QueryResult;
-import cn.edu.thssdb.schema.Database;
 import cn.edu.thssdb.schema.Manager;
 import cn.edu.thssdb.common.Global;
 import org.antlr.v4.runtime.CharStreams;
 import org.antlr.v4.runtime.CommonTokenStream;
 
-import java.io.File;
-import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.OpenOption;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.HashSet;
-import java.util.Set;
 
 
 public class SQLHandler {
@@ -30,8 +25,6 @@ public class SQLHandler {
     public QueryResult evaluate(String statement, long session) {
         System.out.println("session:" + session + "  " + statement);
         var currentDB = manager.getCurrentDatabase();
-        if (currentDB == null) throw new DatabaseNotExistException();
-        String databaseName = currentDB.getDatabaseName();
         if (statement.equals(Global.LOG_BEGIN_TRANSACTION)) {
             try {
                 if (manager.inTransactionSessions.contains(session))
@@ -48,6 +41,7 @@ public class SQLHandler {
 
         if (statement.equals(Global.LOG_COMMIT)) {
             try {
+                if (currentDB == null) throw new Exception("current database is unspecified");
                 if (!manager.inTransactionSessions.contains(session))
                     throw new Exception("session not in a transaction.");
                 // 禁止恶意commit，非必要不记commit
@@ -57,12 +51,13 @@ public class SQLHandler {
                 for (var tableName : manager.sessionToLocks.get(session))
                     currentDB.get(tableName).lock.Release(session);
                 manager.sessionToLocks.remove(session);
-                mayCheckPoint(databaseName);
+                mayCheckPoint(currentDB.getDatabaseName());
             } catch (Exception e) {
                 return new QueryResult(e.getMessage());
             }
             return new QueryResult("commit transaction.");
         }
+
         SQLParser.Sql_stmtContext stmt;
         try {
             stmt = parseStatement(statement);
@@ -70,10 +65,13 @@ public class SQLHandler {
             String message = "Exception: illegal SQL statement! Error message: " + e.getMessage();
             return new QueryResult(message);
         }
-
         ImpVisitor visitor = new ImpVisitor(manager, session);
+        var databaseStmt = LockVisitor.visitDatabaseStmt(stmt);
+        if (databaseStmt) // lock database in manager member function.
+            return visitor.visitSql_stmt(stmt);
+
+        if (currentDB == null) return new QueryResult("current database is unspecified");
         // never lock manager
-        // lock database in manager member function.
         var SLockTables = LockVisitor.visitTableSharedLock(stmt);
         var XLockTables = LockVisitor.visitTableExclusiveLock(stmt);
         var locks = manager.sessionToLocks.get(session);

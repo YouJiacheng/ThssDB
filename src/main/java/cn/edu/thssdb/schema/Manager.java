@@ -30,8 +30,6 @@ public class Manager {
         File managerFolder = new File(Global.DBMS_DIR + File.separator + "data");
         if (!(managerFolder.exists() || managerFolder.mkdirs())) throw new RuntimeException("create file failed");
         recover();
-        createDatabaseIfNotExists("db");
-        persistMeta();
     }
 
     public void deleteDatabase(String databaseName, long session) {
@@ -41,6 +39,8 @@ public class Manager {
             db.dropDatabase(); // synchronized by db
             synchronized (this) {
                 databases.remove(databaseName);
+                if (db == currentDatabase)
+                    currentDatabase = null;
             }
         } catch (Exception e) {
             e.printStackTrace();
@@ -58,7 +58,7 @@ public class Manager {
                     if (currentDatabase != null) currentDatabase.lock.SRelease(session);
                 currentDatabase = db;
             }
-        } catch (Exception e) {
+        } catch (InterruptedException e) {
             e.printStackTrace();
         }
     }
