@@ -21,18 +21,15 @@ public class Table implements Iterable<Row> {
         Long XSession;
         public ArrayList<Long> SLocked;
         public MyLock(){
-            SLocked =new ArrayList<>();
+            SLocked = new ArrayList<>();
         }
         public synchronized void XLock(Long se){
-            if(XLocked || se.equals(XSession)){
-                System.out.println("reenter x_lock");
+            if(XLocked || se.equals(XSession))
                 return;
-            }
+            
             try {
-                while(XLocked){
-                    System.out.println("Waiting");
-                        this.wait();
-                }
+                while(XLocked)
+                    this.wait();
             } catch (InterruptedException e) {
                 throw new RuntimeException(e);
             }
@@ -44,17 +41,14 @@ public class Table implements Iterable<Row> {
             if(!XLocked)
                 return;
             if(se.equals(XSession)) {
-                System.out.println("X lock Released!");
                 XLocked = false;
                 this.notifyAll();
             }
         }
         public synchronized void SLock(Long se){
-            System.out.println("Xlocked is" + XLocked + " Locked seesion is " + XSession + " Cur session is " + se + " They are " + (XLocked && !XSession.equals(se)));
             try {
-                while(XLocked && !XSession.equals(se)){
+                while(XLocked && !XSession.equals(se))
                         this.wait();
-                }
             } catch (InterruptedException e) {
                 throw new RuntimeException(e);
             }
