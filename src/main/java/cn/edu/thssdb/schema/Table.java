@@ -7,6 +7,7 @@ import cn.edu.thssdb.common.Pair;
 
 import java.io.*;
 import java.util.*;
+import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import static cn.edu.thssdb.type.ColumnType.STRING;
@@ -15,47 +16,100 @@ import static cn.edu.thssdb.type.ColumnType.STRING;
 // TODO lock control, variables init.
 
 public class Table implements Iterable<Row> {
-    private ReentrantReadWriteLock lock;
+    private static class MyLock {
+        public boolean XLocked = false;
+        Long XSession;
+        public ArrayList<Long> SLocked;
+        public MyLock(){
+            SLocked =new ArrayList<>();
+        }
+        public synchronized void XLock(Long se){
+            if(XLocked || se.equals(XSession)){
+                System.out.println("reenter x_lock");
+                return;
+            }
+            try {
+                while(XLocked){
+                    System.out.println("Waiting");
+                        this.wait();
+                }
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+            XSession = se;
+            XLocked = true;
+            this.notifyAll();
+        }
+        public synchronized void XRelease(Long se){
+            if(!XLocked)
+                return;
+            if(se.equals(XSession)) {
+                System.out.println("X lock Released!");
+                XLocked = false;
+                this.notifyAll();
+            }
+        }
+        public synchronized void SLock(Long se){
+            System.out.println("Xlocked is" + XLocked + " Locked seesion is " + XSession + " Cur session is " + se + " They are " + (XLocked && !XSession.equals(se)));
+            try {
+                while(XLocked && !XSession.equals(se)){
+                        this.wait();
+                }
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+            if(!SLocked.contains(se))
+                SLocked.add(se);
+        }
+        public synchronized void SRelease(Long se){
+            SLocked.remove(se);
+        }
+    }
+    private final ReadWriteLock lock;
     private String databaseName;
     public String tableName;
     public ArrayList<Column> columns;
     public BPlusTree<Cell, Row> index;
     public int primaryIndex;
+    private MyLock m_lock;
 
     // ADD lock variables for S, X locks and etc here.
 
     // TODO: table/tuple level locks
 
     public void takeSLock(Long sessionId) {
-        lock.readLock().lock();
-        System.out.println("--S locked by "+ sessionId);
-        System.out.println(lock.readLock().toString());
+//        lock.readLock().lock();
+//        System.out.println("--S locked by "+ sessionId);
+//        System.out.println(lock.readLock().toString());
+        m_lock.SLock(sessionId);
     }
 
     public void releaseSLock(Long sessionId) {
-        System.out.println("count is "+lock.getReadHoldCount() );
-        final int holdCount = lock.getReadHoldCount();
-        for (int i = 0; i < holdCount; i++) {
-            lock.readLock().unlock();
-            System.out.println("--S release by "+ sessionId);
-        }
+//        System.out.println("count is "+lock.getReadHoldCount() );
+//        final int holdCount = lock.getReadHoldCount();
+//            for (int i = 0; i < holdCount; i++) {
+//            lock.readLock().unlock();
+//           System.out.println("--S release by "+ sessionId);
+//       }
+        m_lock.XRelease(sessionId);
     }
 
     public void takeXLock(Long sessionId) {
-        lock.writeLock().lock();
-        System.out.println("--X locked by "+ sessionId);
+//        lock.writeLock().lock();
+//        System.out.println("--X locked by "+ sessionId);
+        m_lock.XLock(sessionId);
     } // 在test成功前提下拿X锁。返回值false表示session之前已拥有这个表的X锁。
 
     public void releaseXLock(Long sessionId) {
-        lock.writeLock().unlock();
-        System.out.println("--X release by "+ sessionId);
+//        lock.writeLock().unlock();
+//        System.out.println("--X release by "+ sessionId);
+        m_lock.XRelease(sessionId);
     }
     public void printLock(){
         System.out.println("=========");
         System.out.println("X lock");
-        System.out.println(lock.writeLock());
+        System.out.println(m_lock.XSession);
         System.out.println("S lock");
-        System.out.println(lock.readLock());
         System.out.println("=========");
     }
 
@@ -68,7 +122,7 @@ public class Table implements Iterable<Row> {
         this.columns = new ArrayList<>(Arrays.asList(columns));
         this.index = new BPlusTree<>();
         this.primaryIndex = -1;
-
+        m_lock = new MyLock();
         for (int i = 0; i < this.columns.size(); i++) {
             if (this.columns.get(i).primary) {
                 if (this.primaryIndex >= 0) throw new MultiPrimaryKeyException(this.tableName);

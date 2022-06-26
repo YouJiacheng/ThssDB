@@ -117,18 +117,7 @@ public class SQLHandler {
         ArrayList<String> s_lock_list = manager.s_lockDict.get(session);
         ArrayList<String> new_x_list = new ArrayList<>(x_lock_list);
         ArrayList<String> new_s_list = new ArrayList<>(s_lock_list);
-        System.out.println("For session " + session);
-        System.out.println("====BEFORE====");
-        for (String s : x_lock_list){
-            System.out.println("Write locked " + s);
-        }
-        for (String s : s_lock_list){
-            System.out.println("Read locked " + s);
-        }
 
-        System.out.println("Pid is:" + ManagementFactory.getRuntimeMXBean().getName().split("@")[0]);
-
-        System.out.println("====AFTER====");
         for (String s : lockXTables){
             if(!x_lock_list.contains(s)) {
                 if(s_lock_list.contains(s)){
@@ -136,17 +125,13 @@ public class SQLHandler {
                     new_s_list.remove(s);
                 }
                 currentDB.get(s).takeXLock(session);
-                currentDB.get(s).printLock();
-                System.out.println("Write locked " +s);
                 new_x_list.add(s);
             }
         }
         for (String s : lockSTables){
             if((!s_lock_list.contains(s)) && (!new_x_list.contains(s))) {
                 currentDB.get(s).takeSLock(session);
-                currentDB.get(s).printLock();
                 new_s_list.add(s);
-                System.out.println("Read locked " +s);
             }
         }
 
