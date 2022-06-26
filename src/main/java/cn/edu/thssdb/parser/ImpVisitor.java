@@ -412,42 +412,62 @@ public class ImpVisitor extends SQLBaseVisitor<Object> {
         List<String> naturalJoinColumnsName = null;
         var onConditions = ctx.multiple_condition();
         if (onConditions == null) { // natural join or single table
-            Set<String> sharedColumnNameSet = new HashSet<>(tablesColumnsName.get(0));
+            Map<String, Integer> columnCount = new HashMap<>();
             for (var ns : tablesColumnsName)
-                sharedColumnNameSet.retainAll(ns);
+                for (var n : ns) {
+                    var c = columnCount.getOrDefault(n, 0);
+                    columnCount.put(n, c + 1);
+                }
+            Set<String> sharedColumnNameSet = new HashSet<>();
+            columnCount.forEach((n, c) -> {
+                if (c > 1) sharedColumnNameSet.add(n);
+            });
             var columnIdx = new ArrayList<List<Integer>>(); // [sharedColumns, tables]
             for (var columnName : sharedColumnNameSet)
                 columnIdx.add(tables.stream().map(t -> t.columns.stream().map(Column::getColumnName).toList().indexOf(columnName)).toList());
             naturalJoinPredicate = rows -> {
                 for (var idx : columnIdx) {
-                    var cell = rows.get(0).getEntries().get(idx.get(0));
-                    for (int i = 1; i < numTables; ++i) {
-                        var other = rows.get(i).getEntries().get(idx.get(i));
-                        if (cell.value == null || other.value == null) return false;
-                        if (cell.value.getClass() != other.value.getClass()) return false;
-                        if (!cell.value.equals(other.value)) return false;
+                    Cell ref = null;
+                    for (int i = 0; i < numTables; ++i) {
+                        if (idx.get(i) < 0) continue;
+                        var current = rows.get(i).getEntries().get(idx.get(i));
+                        if (ref == null) {
+                            ref = current;
+                            continue;
+                        }
+                        if (ref.value == null || current.value == null) return false;
+                        if (ref.value.getClass() != current.value.getClass()) return false;
+                        if (!ref.value.equals(current.value)) return false;
                     }
                 }
                 return true;
             };
             naturalJoinProjector = rows -> {
+                var addedShared = new HashSet<String>();
                 var entries = new ArrayList<Cell>();
-                for (var idx : columnIdx)
-                    entries.add(rows.get(0).getEntries().get(idx.get(0)));
                 for (int i = 0; i < numTables; ++i) {
                     var tableColumnsName = tablesColumnsName.get(i);
-                    var tableEntries = rows.get(i).getEntries();
-                    for (int j = 0; j < tableColumnsName.size(); ++j)
-                        if (!sharedColumnNameSet.contains(tableColumnsName.get(j))) entries.add(tableEntries.get(j));
+                    for (int j = 0; j < tableColumnsName.size(); ++j) {
+                        var n = tableColumnsName.get(j);
+                        if (sharedColumnNameSet.contains(n)) {
+                            if (addedShared.contains(n)) continue;
+                            addedShared.add(n);
+                        }
+                        entries.add(rows.get(i).getEntries().get(j));
+                    }
                 }
                 return new Row(entries);
             };
+            var addedShared = new HashSet<String>();
             naturalJoinColumnsName = new ArrayList<>();
-            for (var idx : columnIdx)
-                naturalJoinColumnsName.add(tablesColumnsName.get(0).get(idx.get(0)));
             for (var ns : tablesColumnsName)
-                for (var n : ns)
-                    if (!sharedColumnNameSet.contains(n)) naturalJoinColumnsName.add(n);
+                for (var n : ns) {
+                    if (sharedColumnNameSet.contains(n)) {
+                        if (addedShared.contains(n)) continue;
+                        addedShared.add(n);
+                    }
+                    naturalJoinColumnsName.add(n);
+                }
             tableToColumnsName.put(defaultTableName, naturalJoinColumnsName);
         }
 
