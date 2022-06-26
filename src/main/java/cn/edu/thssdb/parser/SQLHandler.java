@@ -12,6 +12,7 @@ import org.antlr.v4.runtime.CommonTokenStream;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.lang.management.ManagementFactory;
 import java.nio.file.Files;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
@@ -37,13 +38,18 @@ public class SQLHandler {
         String stmt_head = statement.split("\\s+")[0];
 
         System.out.println("session:" + session + "  " + statement);
+        Database currentDB = manager.getCurrentDatabase();
+        if (currentDB == null) throw new DatabaseNotExistException();
+        String databaseName = currentDB.getDatabaseName();
         if (statement.equals(Global.LOG_BEGIN_TRANSACTION)) {
+            System.out.println("BEGIN");
             try {
                 if (manager.currentSessions.contains(session)) throw new Exception("session already in a transaction.");
                 // 禁止恶意begin，非必要不记begin
                 if (session >= 0) manager.writeLog(statement, session);
                 manager.currentSessions.add(session);
                 manager.x_lockDict.put(session, new ArrayList<>());
+                manager.s_lockDict.put(session, new ArrayList<>());
             } catch (Exception e) {
                 return new QueryResult(e.getMessage());
             }
@@ -53,16 +59,19 @@ public class SQLHandler {
         if (statement.equals(Global.LOG_COMMIT)) {
             try {
                 if (!manager.currentSessions.contains(session)) throw new Exception("session not in a transaction.");
-                Database currentDB = manager.getCurrentDatabase();
-                if (currentDB == null) throw new DatabaseNotExistException();
+                System.out.println("COMMIT");
                 // 禁止恶意commit，非必要不记commit
                 if (session >= 0) manager.writeLog(statement, session);
-                String databaseName = currentDB.getDatabaseName();
                 manager.currentSessions.remove(session);
                 ArrayList<String> table_list = manager.x_lockDict.get(session);
                 for (String table_name : table_list) {
                     Table currentTable = currentDB.get(table_name);
                     currentTable.releaseXLock(session);
+                }
+                table_list = manager.s_lockDict.get(session);
+                for (String table_name : table_list) {
+                    Table currentTable = currentDB.get(table_name);
+                    currentTable.releaseSLock(session);
                 }
                 table_list.clear();
 
@@ -104,6 +113,45 @@ public class SQLHandler {
         var lockXDB = LockVisitor.visitDatabaseExclusiveLock(stmt);
         var lockSTables = LockVisitor.visitTableSharedLock(stmt);
         var lockXTables = LockVisitor.visitTableExclusiveLock(stmt);
+        ArrayList<String> x_lock_list = manager.x_lockDict.get(session);
+        ArrayList<String> s_lock_list = manager.s_lockDict.get(session);
+        ArrayList<String> new_x_list = new ArrayList<>(x_lock_list);
+        ArrayList<String> new_s_list = new ArrayList<>(s_lock_list);
+        System.out.println("For session " + session);
+        System.out.println("====BEFORE====");
+        for (String s : x_lock_list){
+            System.out.println("Write locked " + s);
+        }
+        for (String s : s_lock_list){
+            System.out.println("Read locked " + s);
+        }
+
+        System.out.println("Pid is:" + ManagementFactory.getRuntimeMXBean().getName().split("@")[0]);
+
+        System.out.println("====AFTER====");
+        for (String s : lockXTables){
+            if(!x_lock_list.contains(s)) {
+                if(s_lock_list.contains(s)){
+                    currentDB.get(s).releaseSLock(session);
+                    new_s_list.remove(s);
+                }
+                currentDB.get(s).takeXLock(session);
+                currentDB.get(s).printLock();
+                System.out.println("Write locked " +s);
+                new_x_list.add(s);
+            }
+        }
+        for (String s : lockSTables){
+            if((!s_lock_list.contains(s)) && (!new_x_list.contains(s))) {
+                currentDB.get(s).takeSLock(session);
+                currentDB.get(s).printLock();
+                new_s_list.add(s);
+                System.out.println("Read locked " +s);
+            }
+        }
+
+        manager.s_lockDict.put(session, new_s_list);
+        manager.x_lockDict.put(session, new_x_list);
         return visitor.visitSql_stmt(stmt);
     }
 

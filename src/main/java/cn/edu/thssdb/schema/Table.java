@@ -28,18 +28,35 @@ public class Table implements Iterable<Row> {
 
     public void takeSLock(Long sessionId) {
         lock.readLock().lock();
+        System.out.println("--S locked by "+ sessionId);
+        System.out.println(lock.readLock().toString());
     }
 
     public void releaseSLock(Long sessionId) {
-        lock.readLock().unlock();
+        System.out.println("count is "+lock.getReadHoldCount() );
+        final int holdCount = lock.getReadHoldCount();
+        for (int i = 0; i < holdCount; i++) {
+            lock.readLock().unlock();
+            System.out.println("--S release by "+ sessionId);
+        }
     }
 
     public void takeXLock(Long sessionId) {
         lock.writeLock().lock();
+        System.out.println("--X locked by "+ sessionId);
     } // 在test成功前提下拿X锁。返回值false表示session之前已拥有这个表的X锁。
 
     public void releaseXLock(Long sessionId) {
         lock.writeLock().unlock();
+        System.out.println("--X release by "+ sessionId);
+    }
+    public void printLock(){
+        System.out.println("=========");
+        System.out.println("X lock");
+        System.out.println(lock.writeLock());
+        System.out.println("S lock");
+        System.out.println(lock.readLock());
+        System.out.println("=========");
     }
 
 

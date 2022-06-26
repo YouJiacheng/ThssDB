@@ -25,6 +25,7 @@ public class Manager {
     public ArrayList<Long> waitSessions;
     public static SQLHandler sqlHandler;
     public HashMap<Long, ArrayList<String>> x_lockDict;
+    public HashMap<Long, ArrayList<String>> s_lockDict;
     //  private final static String INSERT = "insert";
 //  private final static String DELETE = "delete";
 //  private final static String UPDATE = "update";
@@ -43,6 +44,7 @@ public class Manager {
         currentSessions = new ArrayList<>();
         sqlHandler = new SQLHandler(this);
         x_lockDict = new HashMap<>();
+        s_lockDict = new HashMap<>();
         File managerFolder = new File(Global.DBMS_DIR + File.separator + "data");
         if (!managerFolder.exists()) managerFolder.mkdirs();
         recover();
@@ -88,13 +90,13 @@ public class Manager {
     // Lock example: quit current manager
     public void quit() {
         try {
-            lock.writeLock().lock();
+            // lock.writeLock().lock();
             for (Database database : databases.values())
                 database.quit();
             persist();
             databases.clear();
         } finally {
-            lock.writeLock().unlock();
+            // lock.writeLock().unlock();
         }
     }
 
